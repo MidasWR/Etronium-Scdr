@@ -582,6 +582,18 @@
         }
       }
     },
+    "v1AcknowledgeLazyDeathRequest": {
+      "type": "object",
+      "properties": {
+        "lordId": {
+          "type": "string"
+        },
+        "gracePeriodSec": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
     "v1AcknowledgeLazyDeathResponse": {
       "type": "object",
       "properties": {
@@ -591,6 +603,22 @@
         "drainTimeoutSec": {
           "type": "integer",
           "format": "int32"
+        }
+      }
+    },
+    "v1CheckpointRequest": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "type": "string"
+        },
+        "checkpointDir": {
+          "type": "string",
+          "title": "куда lord положит dump"
+        },
+        "leaveRunning": {
+          "type": "boolean",
+          "title": "freeze и продолжать, или полностью остановить"
         }
       }
     },
@@ -622,6 +650,22 @@
         }
       }
     },
+    "v1FilePushRequest": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string",
+          "format": "byte"
+        },
+        "mode": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
     "v1FilePushResponse": {
       "type": "object",
       "properties": {
@@ -630,6 +674,27 @@
         },
         "sha256": {
           "type": "string"
+        }
+      }
+    },
+    "v1HeartbeatRequest": {
+      "type": "object",
+      "properties": {
+        "lordId": {
+          "type": "string"
+        },
+        "cpuUsedPct": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Текущая утилизация (не cumulative — snapshot)."
+        },
+        "memUsedBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "activeProcesses": {
+          "type": "integer",
+          "format": "int32"
         }
       }
     },
@@ -687,6 +752,23 @@
       "properties": {
         "ok": {
           "type": "boolean"
+        }
+      }
+    },
+    "v1KillRequest": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "type": "string"
+        },
+        "signalNumber": {
+          "type": "integer",
+          "format": "int32",
+          "title": "default 15 (SIGTERM)"
+        },
+        "force": {
+          "type": "boolean",
+          "title": "true → SIGKILL, bypass grace"
         }
       }
     },
@@ -788,6 +870,42 @@
       },
       "description": "Информация о лорде — \"ядре\" в NUMA-аналогии."
     },
+    "v1LordEvent": {
+      "type": "object",
+      "properties": {
+        "registerAck": {
+          "$ref": "#/definitions/v1RegisterResponse",
+          "title": "ack на Register"
+        },
+        "heartbeatAck": {
+          "$ref": "#/definitions/v1HeartbeatResponse"
+        },
+        "spawn": {
+          "$ref": "#/definitions/v1SpawnRequest",
+          "title": "запустить процесс"
+        },
+        "kill": {
+          "$ref": "#/definitions/v1KillRequest",
+          "title": "послать сигнал"
+        },
+        "checkpoint": {
+          "$ref": "#/definitions/v1CheckpointRequest",
+          "title": "CRIU dump (Phase 3+)"
+        },
+        "restore": {
+          "$ref": "#/definitions/v1RestoreRequest",
+          "title": "CRIU restore (Phase 3+)"
+        },
+        "filePush": {
+          "$ref": "#/definitions/v1FilePushRequest",
+          "title": "file transfer (Phase 4+)"
+        },
+        "lazyDeathAck": {
+          "$ref": "#/definitions/v1AcknowledgeLazyDeathResponse"
+        }
+      },
+      "description": "LordEvent — то что scheduler шлёт lord'у в Connect stream."
+    },
     "v1MigrateResponse": {
       "type": "object",
       "properties": {
@@ -836,6 +954,33 @@
       },
       "description": "Событие процесса для WatchProcess stream."
     },
+    "v1ProcessExit": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "type": "string"
+        },
+        "exitCode": {
+          "type": "integer",
+          "format": "int32",
+          "title": "-1 если killed by signal"
+        },
+        "exitSignal": {
+          "type": "integer",
+          "format": "int32",
+          "title": "0 если normal exit"
+        },
+        "cpuUsageUsec": {
+          "type": "string",
+          "format": "int64"
+        },
+        "memPeakBytes": {
+          "type": "string",
+          "format": "int64"
+        }
+      },
+      "description": "ProcessExit — lord сообщает что процесс завершился."
+    },
     "v1ProcessInfo": {
       "type": "object",
       "properties": {
@@ -876,6 +1021,10 @@
           "type": "string",
           "format": "date-time"
         },
+        "resources": {
+          "$ref": "#/definitions/v1ResourceSpec",
+          "title": "запрошенные ресурсы (реальные лимиты см. в ProcessRef.LordId через lord API)"
+        },
         "cpuUsageUsecTotal": {
           "type": "string",
           "format": "int64",
@@ -911,6 +1060,18 @@
       },
       "description": "Snapshot процесса — выдаётся через GetProcess/ListProcesses."
     },
+    "v1ProcessIo": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "type": "string"
+        },
+        "chunk": {
+          "$ref": "#/definitions/v1IOChunk"
+        }
+      },
+      "description": "ProcessIo — IO chunk с привязкой к process_id."
+    },
     "v1ProcessRef": {
       "type": "object",
       "properties": {
@@ -929,6 +1090,23 @@
         }
       },
       "description": "Идентификация процесса в SSI.\n\nГлобально процесс адресуется через (lord_id, local_pid) ИЛИ\nчерез process_id (ULID), если мигрировал между lord'ами —\nprocess_id остаётся стабильным, local_pid меняется."
+    },
+    "v1ProcessStarted": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "type": "string"
+        },
+        "localPid": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "ProcessStarted — lord сообщает что процесс успешно запущен."
     },
     "v1ProcessState": {
       "type": "string",
@@ -1075,6 +1253,39 @@
         }
       }
     },
+    "v1RestoreRequest": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "type": "string"
+        },
+        "checkpointPath": {
+          "type": "string"
+        },
+        "execPath": {
+          "type": "string",
+          "description": "Параметры restore: тот же exec_path/argv/env/resources что были,\nиначе процесс не восстановится корректно."
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "resources": {
+          "$ref": "#/definitions/v1ResourceSpec"
+        },
+        "workingDir": {
+          "type": "string"
+        }
+      }
+    },
     "v1RestoreResponse": {
       "type": "object",
       "properties": {
@@ -1131,6 +1342,10 @@
           "type": "string",
           "format": "byte",
           "description": "Initial stdin (если есть что-то ввести сразу при старте)."
+        },
+        "processId": {
+          "type": "string",
+          "title": "глобальный ID, присваивается scheduler'ом"
         }
       }
     }

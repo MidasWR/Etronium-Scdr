@@ -140,6 +140,8 @@ message ProcessInfo {
   // current state
   ProcessState state = 7;
   google.protobuf.Timestamp state_changed_at = 8;
+  // запрошенные ресурсы (реальные лимиты см. в ProcessRef.LordId через lord API)
+  ResourceSpec resources = 16;
   // resource usage за всё время
   int64 cpu_usage_usec_total = 9;
   int64 mem_current_bytes = 10;
@@ -376,6 +378,7 @@ message SpawnRequest {
   bool criu_checkpointable = 8;  // подсказка lord'у что процесс готов к миграции
   // Initial stdin (если есть что-то ввести сразу при старте).
   bytes stdin_initial = 9;
+  string process_id = 10;  // глобальный ID, присваивается scheduler'ом
 }
 
 message KillRequest {
@@ -489,6 +492,16 @@ message InvalidateFileCacheResponse {
 // =====================================================================
 
 service LordService {
+  // Connect — lord открывает bidi stream к scheduler'у.
+  //
+  // Lord при старте открывает ОДИН долгоживущий stream. По нему идёт
+  // всё: register/heartbeat от lord'а, spawn/kill от scheduler'а, и IO
+  // stream от процессов которые scheduler попросил запустить.
+  //
+  // Модель: lord не публикует gRPC server (за NAT может быть). Scheduler
+  // публичный endpoint, lord инициирует соединение.
+  rpc Connect(stream LordCmd) returns (stream LordEvent);
+
   rpc Register(RegisterRequest) returns (RegisterResponse) {
     option (google.api.http) = {
       post: "/api/v1/lords/register"
@@ -692,6 +705,54 @@ message RestoreRequest {
 message RestoreResponse {
   bool ok = 1;
   int32 local_pid = 2;
+}
+
+// LordCmd — то что lord шлёт scheduler'у в Connect stream.
+message LordCmd {
+  oneof cmd {
+    RegisterRequest register = 1;       // первый message после открытия stream
+    HeartbeatRequest heartbeat = 2;     // каждые 10s
+    ProcessStarted started = 3;         // процесс запущен (с local_pid)
+    ProcessIo io = 4;                   // stdout/stderr от запущенного процесса
+    ProcessExit process_exit = 5;       // процесс завершился (exit_code + signal)
+    AcknowledgeLazyDeathRequest lazy_death = 6;
+  }
+}
+
+// ProcessStarted — lord сообщает что процесс успешно запущен.
+message ProcessStarted {
+  string process_id = 1;
+  int32  local_pid = 2;
+  google.protobuf.Timestamp at = 3;
+}
+
+// ProcessIo — IO chunk с привязкой к process_id.
+message ProcessIo {
+  string process_id = 1;
+  IOChunk chunk = 2;
+}
+
+// LordEvent — то что scheduler шлёт lord'у в Connect stream.
+message LordEvent {
+  oneof event {
+    RegisterResponse register_ack = 1;  // ack на Register
+    HeartbeatResponse heartbeat_ack = 2;
+    SpawnRequest spawn = 3;             // запустить процесс
+    KillRequest kill = 4;               // послать сигнал
+    CheckpointRequest checkpoint = 5;   // CRIU dump (Phase 3+)
+    RestoreRequest restore = 6;         // CRIU restore (Phase 3+)
+    FilePushRequest file_push = 7;      // file transfer (Phase 4+)
+    AcknowledgeLazyDeathResponse lazy_death_ack = 8;
+  }
+}
+
+// ProcessExit — lord сообщает что процесс завершился.
+message ProcessExit {
+  string process_id = 1;
+  int32  exit_code = 2;       // -1 если killed by signal
+  int32  exit_signal = 3;     // 0 если normal exit
+  int64  cpu_usage_usec = 4;
+  int64  mem_peak_bytes = 5;
 }
 
 message AcknowledgeLazyDeathRequest {

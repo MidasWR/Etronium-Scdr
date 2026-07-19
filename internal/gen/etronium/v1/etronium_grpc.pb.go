@@ -637,6 +637,7 @@ var SchedulerService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	LordService_Connect_FullMethodName              = "/etronium.v1.LordService/Connect"
 	LordService_Register_FullMethodName             = "/etronium.v1.LordService/Register"
 	LordService_Heartbeat_FullMethodName            = "/etronium.v1.LordService/Heartbeat"
 	LordService_ExecRemote_FullMethodName           = "/etronium.v1.LordService/ExecRemote"
@@ -653,6 +654,15 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type LordServiceClient interface {
+	// Connect — lord открывает bidi stream к scheduler'у.
+	//
+	// Lord при старте открывает ОДИН долгоживущий stream. По нему идёт
+	// всё: register/heartbeat от lord'а, spawn/kill от scheduler'а, и IO
+	// stream от процессов которые scheduler попросил запустить.
+	//
+	// Модель: lord не публикует gRPC server (за NAT может быть). Scheduler
+	// публичный endpoint, lord инициирует соединение.
+	Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LordCmd, LordEvent], error)
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 	// ExecRemote — scheduler просит lord запустить процесс.
@@ -682,6 +692,19 @@ func NewLordServiceClient(cc grpc.ClientConnInterface) LordServiceClient {
 	return &lordServiceClient{cc}
 }
 
+func (c *lordServiceClient) Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LordCmd, LordEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &LordService_ServiceDesc.Streams[0], LordService_Connect_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[LordCmd, LordEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type LordService_ConnectClient = grpc.BidiStreamingClient[LordCmd, LordEvent]
+
 func (c *lordServiceClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RegisterResponse)
@@ -704,7 +727,7 @@ func (c *lordServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRequest,
 
 func (c *lordServiceClient) ExecRemote(ctx context.Context, in *ExecRemoteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[IOChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &LordService_ServiceDesc.Streams[0], LordService_ExecRemote_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &LordService_ServiceDesc.Streams[1], LordService_ExecRemote_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -795,6 +818,15 @@ func (c *lordServiceClient) AcknowledgeLazyDeath(ctx context.Context, in *Acknow
 // All implementations must embed UnimplementedLordServiceServer
 // for forward compatibility.
 type LordServiceServer interface {
+	// Connect — lord открывает bidi stream к scheduler'у.
+	//
+	// Lord при старте открывает ОДИН долгоживущий stream. По нему идёт
+	// всё: register/heartbeat от lord'а, spawn/kill от scheduler'а, и IO
+	// stream от процессов которые scheduler попросил запустить.
+	//
+	// Модель: lord не публикует gRPC server (за NAT может быть). Scheduler
+	// публичный endpoint, lord инициирует соединение.
+	Connect(grpc.BidiStreamingServer[LordCmd, LordEvent]) error
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	// ExecRemote — scheduler просит lord запустить процесс.
@@ -824,6 +856,9 @@ type LordServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedLordServiceServer struct{}
 
+func (UnimplementedLordServiceServer) Connect(grpc.BidiStreamingServer[LordCmd, LordEvent]) error {
+	return status.Errorf(codes.Unimplemented, "method Connect not implemented")
+}
 func (UnimplementedLordServiceServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Register not implemented")
 }
@@ -874,6 +909,13 @@ func RegisterLordServiceServer(s grpc.ServiceRegistrar, srv LordServiceServer) {
 	}
 	s.RegisterService(&LordService_ServiceDesc, srv)
 }
+
+func _LordService_Connect_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(LordServiceServer).Connect(&grpc.GenericServerStream[LordCmd, LordEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type LordService_ConnectServer = grpc.BidiStreamingServer[LordCmd, LordEvent]
 
 func _LordService_Register_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RegisterRequest)
@@ -1093,6 +1135,12 @@ var LordService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Connect",
+			Handler:       _LordService_Connect_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
 		{
 			StreamName:    "ExecRemote",
 			Handler:       _LordService_ExecRemote_Handler,
