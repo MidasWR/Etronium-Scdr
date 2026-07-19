@@ -1,0 +1,426 @@
+// =====================================================================
+//  Etronium-Scdr — gRPC API contract (v1)
+//
+//  Два сервиса:
+//    • SchedulerService  — клиентская сторона (для tenant CLI `etronium`)
+//    • LordService       — серверная сторона для доноров (lord'ов)
+//
+//  Версионирование: etronium.v1.* — стабильный контракт для MVP.
+//  Breaking changes → etronium.v2.* (отдельный пакет).
+//
+//  Документация-OpenAPI генерируется из этого proto через grpc-gateway
+//  annotations, см. docs/openapi/ — для удобства чтения, не runtime.
+// =====================================================================
+
+syntax = "proto3";
+
+package etronium.v1;
+
+option go_package = "github.com/midas/Etronium-Scdr/internal/gen/etronium/v1;etroniumv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+// =====================================================================
+//  OpenAPI метаданные (для swagger)
+// =====================================================================
+
+option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger) = {
+  info: {
+    title: "Etronium-Scdr API"
+    version: "v1"
+    description: "Single-runtime over distributed machines. Scheduler coordinates lords (donors) that execute tenant tasks in OCI containers via containerd. gRPC is the primary protocol; OpenAPI is documentation-only."
+    contact: {
+      name: "Etronium-Scdr"
+    }
+  }
+  schemes: HTTPS
+  consumes: "application/json"
+  produces: "application/json"
+};
+
+// =====================================================================
+//  Common — общие типы, переиспользуются обоими сервисами
+// =====================================================================
+
+// Task lifecycle states.
+// FSM: QUEUED → SCHEDULED → PULLING → RUNNING → (COMPLETED | FAILED | CANCELED)
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;  // sentinel — никогда не должен появляться в API
+  TASK_STATUS_QUEUED      = 1;  // принята scheduler'ом, ждёт placement
+  TASK_STATUS_SCHEDULED   = 2;  // placement выбрал лорда, задача отправляется
+  TASK_STATUS_PULLING     = 3;  // lord забрал задачу (в случае pull-модели)
+  TASK_STATUS_RUNNING     = 4;  // контейнер стартовал
+  TASK_STATUS_COMPLETED   = 5;  // exit code = 0
+  TASK_STATUS_FAILED      = 6;  // exit code != 0 или runtime error
+  TASK_STATUS_CANCELED    = 7;  // tenant/lord отменил до завершения
+}
+
+// Запрашиваемые ресурсы для контейнера. Маппится в cgroups v2:
+//   cpu.max        = quota + period (period обычно 100000)
+//   memory.max     = mem_limit_mb * 1024 * 1024
+message ResourceSpec {
+  int32 cpu_quota_pct = 1;  // 1..100, default 50
+  int32 mem_limit_mb  = 2;  // > 0, default 256
+  int32 timeout_sec   = 3;  // > 0, default 30, max 600
+}
+
+// Информация о лорде (публичная часть, без секретов).
+message Lord {
+  string lord_id       = 1;  // уникальный ID, стабильный между рестартами
+  string hostname      = 2;  // os.Hostname() — для отладки и "wow" момента
+  ResourceSpec capacity = 3;  // задекларированные возможности
+  bool     healthy     = 4;  // последний heartbeat был свежим
+  double   reputation  = 5;  // 0.0..1.0, computed scheduler'ом
+  google.protobuf.Timestamp last_seen = 6;
+}
+
+// Финальный результат задачи.
+message TaskResult {
+  int32  exit_code      = 1;
+  string stdout         = 2;  // полный stdout (или truncated — см. flags)
+  string stderr         = 3;
+  int64  duration_ms    = 4;
+  int64  cpu_usage_usec = 5;  // из cpu.stat cgroup
+  int64  mem_peak_bytes = 6;  // пиковое потребление памяти
+  string error          = 7;  // human-readable если FAILED
+}
+
+// =====================================================================
+//  SchedulerService — для tenant'а (etronium CLI)
+//
+//  Тенант НЕ ходит напрямую к лорду. Всё через scheduler.
+//  Это даёт:
+//    • централизованный audit log
+//    • placement decision (в Phase 3+)
+//    • единственный auth-барьер
+// =====================================================================
+
+service SchedulerService {
+  // SubmitTask — основной entry point для тенанта.
+  //
+  // Принимает образ (например "alpine") + команду для исполнения внутри.
+  // Scheduler валидирует (denylist в MVP), выбирает лорда (Phase 3+),
+  // возвращает task_id для дальнейшего polling/streaming.
+  rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/tasks"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Submit a new task"
+      description: "Tenant submits a task for execution. Returns task_id."
+      tags: "tenant"
+    };
+  }
+
+  // GetTask — получить текущий статус и (если есть) результат.
+  //
+  // Тенант poll'ит этот endpoint пока status != COMPLETED/FAILED/CANCELED.
+  // В Phase 2 заменяется на StreamTask (server streaming).
+  rpc GetTask(GetTaskRequest) returns (Task) {
+    option (google.api.http) = {
+      get: "/api/v1/tasks/{task_id}"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Get task status"
+      description: "Returns current task status. Idempotent."
+      tags: "tenant"
+    };
+  }
+
+  // ListTasks — список задач тенанта (для UI/CLI `etronium task list`).
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/tasks"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List tenant tasks"
+      description: "Paginated tenant task list, newest first."
+      tags: "tenant"
+    };
+  }
+
+  // CancelTask — отменить задачу (если ещё не завершена).
+  //
+  // Best-effort: если lord уже стартовал контейнер, шлёт SIGTERM/SIGKILL.
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/tasks/{task_id}/cancel"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Cancel a running task"
+      description: "Best-effort cancellation. No guarantee of immediate effect."
+      tags: "tenant"
+    };
+  }
+
+  // StreamTask — server streaming логов и финального результата.
+  //
+  // Открывает server-side stream: шлёт LogChunk'и по мере появления,
+  // в конце — TaskResult. Заменяет polling для UX "live output".
+  // Реализуется в Phase 2.
+  rpc StreamTask(StreamTaskRequest) returns (stream TaskEvent) {
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Stream task events (logs + result)"
+      description: "Server streaming. Sends LogChunk as lord produces stdout/stderr, finally TaskResult. Stream closes when task reaches terminal status."
+      tags: "tenant"
+    };
+  }
+
+  // ListLords — список зарегистрированных лордов (для UI/CLI).
+  rpc ListLords(ListLordsRequest) returns (ListLordsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/lords"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List registered lords"
+      description: "Public list of lords with capacity/reputation/health."
+      tags: "tenant"
+    };
+  }
+}
+
+// --- SchedulerService messages ---
+
+message SubmitTaskRequest {
+  string tenant_id   = 1;  // пока pre-shared per CLI install; auth — Phase 2+
+  string image       = 2;  // OCI reference, e.g. "alpine", "alpine:3.20", "ghcr.io/x/y:tag"
+  repeated string command = 3;  // argv-style: ["sh", "-c", "echo hi"]
+  ResourceSpec resources = 4;  // optional, defaults из конфига scheduler'а
+  map<string, string> env = 5;  // env vars для контейнера (Phase 1+)
+  map<string, string> labels = 6;  // произвольные метаданные тенанта
+}
+
+message SubmitTaskResponse {
+  string task_id = 1;  // ULID, sortable
+  TaskStatus initial_status = 2;  // обычно QUEUED
+}
+
+message GetTaskRequest {
+  string task_id = 1;
+}
+
+message ListTasksRequest {
+  string tenant_id = 1;  // фильтр по тенанту; пустой = все (для admin)
+  int32  limit    = 2;   // default 50, max 500
+  string page_token = 3; // opaque cursor для пагинации
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+  string next_page_token = 2;
+}
+
+message CancelTaskRequest {
+  string task_id = 1;
+  bool   force   = 2;  // true = SIGKILL, false (default) = SIGTERM + grace period
+}
+
+message CancelTaskResponse {
+  bool   acknowledged = 1;  // scheduler принял запрос
+  TaskStatus current_status = 2;
+}
+
+message StreamTaskRequest {
+  string task_id = 1;
+  bool   follow  = 2;  // если true — стримит с начала, false — с текущего момента
+}
+
+message ListLordsRequest {
+  bool only_healthy = 1;  // default true
+}
+
+message ListLordsResponse {
+  repeated Lord lords = 1;
+}
+
+// =====================================================================
+//  LordService — для лордов (доноров)
+//
+//  Лорды регистрируются, шлют heartbeat, получают задачи от scheduler'а.
+//  В Phase 0 — простая unidirectional модель. В Phase 2+ — bidi streaming
+//  для live logs и lazy death.
+// =====================================================================
+
+service LordService {
+  // Register — лорд сообщает о себе при старте.
+  //
+  // Scheduler отвечает LordID и списком capabilities. В Phase 3+
+  // сюда добавится auth-токен лорда (pre-shared, в metadata).
+  rpc Register(RegisterRequest) returns (RegisterResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/lords/register"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Lord registration"
+      description: "Lord registers itself with scheduler on startup."
+      tags: "lord"
+    };
+  }
+
+  // Heartbeat — лорд шлёт keepalive каждые 5–10 сек.
+  //
+  // Двунаправленный стрим в Phase 3+ (lord может получать команды
+  // "drain", "config update"). В MVP — unary, scheduler отвечает Pong.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/lords/{lord_id}/heartbeat"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Lord heartbeat (unary in MVP)"
+      description: "Keepalive + current load. Phase 3+ -> bidi stream."
+      tags: "lord"
+    };
+  }
+
+  // RunTask — scheduler шлёт лорду задачу на исполнение.
+  //
+  // Server streaming: scheduler держит stream открытым, лорд шлёт
+  // TaskUpdate (статус + промежуточные события) + финальный TaskResult.
+  rpc RunTask(RunTaskRequest) returns (stream TaskUpdate) {
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Execute a task (server stream)"
+      description: "Scheduler initiates. Lord sends status updates, logs and final result on the stream."
+      tags: "lord"
+    };
+  }
+
+  // AcknowledgeLazyDeath — лорд объявляет о плановом завершении.
+  //
+  // Scheduler перестаёт выдавать новые задачи, ждёт завершения текущих.
+  // Реализуется в Phase 4.
+  rpc AcknowledgeLazyDeath(AcknowledgeLazyDeathRequest) returns (AcknowledgeLazyDeathResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/lords/{lord_id}/lazy-death"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Acknowledge lazy death"
+      description: "Lord announces planned shutdown. Scheduler drains it gracefully."
+      tags: "lord"
+    };
+  }
+}
+
+// --- LordService messages ---
+
+message RegisterRequest {
+  string hostname   = 1;
+  string os         = 2;  // "linux"
+  string arch       = 3;  // "amd64"
+  int32  cpu_total  = 4;  // cores
+  int32  mem_total_mb = 5;
+  ResourceSpec default_capacity = 6;  // что лорд готов выделять по умолчанию
+  string auth_token = 7;  // pre-shared, пока в plaintext в metadata (Phase 0)
+}
+
+message RegisterResponse {
+  string lord_id = 1;     // присвоенный scheduler'ом ID (ULID)
+  int32  heartbeat_interval_sec = 2;  // рекомендуемый интервал (default 10)
+}
+
+message HeartbeatRequest {
+  string lord_id = 1;
+  int32  current_cpu_pct = 2;  // текущая утилизация, 0..100
+  int32  current_mem_mb = 3;   // текущее потребление RAM
+  int32  active_tasks = 4;     // сколько задач сейчас выполняется
+}
+
+message HeartbeatResponse {
+  bool ack = 1;
+  int32 next_heartbeat_sec = 2;  // hint от scheduler'а
+  bool drain = 3;                // true → лорд должен начать lazy death
+}
+
+message RunTaskRequest {
+  string task_id = 1;
+  string tenant_id = 2;
+  string image = 3;
+  repeated string command = 4;
+  ResourceSpec resources = 5;
+  map<string, string> env = 6;
+  google.protobuf.Timestamp deadline = 7;  // absolute deadline (started_at + timeout)
+}
+
+// TaskUpdate — то что лорд шлёт scheduler'у в RunTask stream.
+//
+// Эволюция статусов внутри одной задачи:
+//   QUEUED → SCHEDULED → PULLING → RUNNING → COMPLETED|FAILED|CANCELED
+message TaskUpdate {
+  string task_id = 1;
+  TaskStatus status = 2;             // новый статус
+  google.protobuf.Timestamp at = 3;
+  oneof payload {
+    LogChunk log_chunk = 4;          // chunk stdout/stderr во время RUNNING
+    TaskResult result = 5;           // финальный, при COMPLETED/FAILED/CANCELED
+    PullStarted pull_started = 6;   // лорд начал pull образа
+    ContainerStarted container_started = 7;  // containerd создал контейнер
+  }
+}
+
+message LogChunk {
+  enum Stream {
+    STREAM_UNSPECIFIED = 0;
+    STREAM_STDOUT = 1;
+    STREAM_STDERR = 2;
+  }
+  Stream stream = 1;
+  bytes  data   = 2;     // raw bytes, UTF-8 assumed
+  int64  offset = 3;     // byte offset от начала (для ordering и resume)
+}
+
+message PullStarted {
+  string image = 1;
+  google.protobuf.Timestamp at = 2;
+}
+
+message ContainerStarted {
+  string container_id = 1;  // containerd container ID
+  google.protobuf.Timestamp at = 2;
+}
+
+message AcknowledgeLazyDeathRequest {
+  string lord_id = 1;
+  int32  grace_period_sec = 2;  // за сколько секунд лорд хочет завершиться
+}
+
+message AcknowledgeLazyDeathResponse {
+  bool ack = 1;
+  int32 drain_timeout_sec = 2;  // сколько ждать до принудительного выведения
+}
+
+// =====================================================================
+//  Task — основная сущность, возвращается из GetTask/ListTasks
+// =====================================================================
+
+message Task {
+  string task_id = 1;
+  string tenant_id = 2;
+  string image = 3;
+  repeated string command = 4;
+  ResourceSpec resources = 5;
+  TaskStatus status = 6;
+  string landlord_id = 7;  // ID лорда, который исполняет (set после placement)
+  TaskResult result = 8;   // populated когда status in (COMPLETED, FAILED, CANCELED)
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp finished_at = 11;
+  map<string, string> labels = 12;
+}
+
+// TaskEvent — то что шлётся в StreamTask (для тенанта).
+//
+// Объединяет status changes + log chunks + result в один поток.
+message TaskEvent {
+  oneof event {
+    TaskStatus status_changed = 1;  // новый статус
+    LogChunk   log_chunk = 2;       // stdout/stderr
+    TaskResult final_result = 3;    // отправляется один раз перед закрытием стрима
+  }
+  google.protobuf.Timestamp at = 4;
+}

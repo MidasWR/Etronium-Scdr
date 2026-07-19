@@ -21,9 +21,24 @@
 | [`docs/RESEARCH.md`](./docs/RESEARCH.md) | стартовое исследование (импорт из исходного репо) |
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | целевая архитектура, диаграммы, контракты |
 | [`docs/ROADMAP.md`](./docs/ROADMAP.md) | поэтапный план реализации (фазы 0–5) |
-| [`docs/DECISIONS.md`](./docs/DECISIONS.md) | журнал принятых решений (ADR-style) |
 | [`docs/STACK.md`](./docs/STACK.md) | конкретные библиотеки, версии, что НЕ используем |
+| [`docs/PROTO.md`](./docs/PROTO.md) | gRPC контракт, HTTP endpoints, FSM задач |
+| [`docs/DECISIONS.md`](./docs/DECISIONS.md) | журнал принятых решений (ADR-style) |
 | [`docs/OPEN-QUESTIONS.md`](./docs/OPEN-QUESTIONS.md) | нерешённые вопросы, требующие решения до старта |
+| [`docs/openapi/etronium.swagger.json`](./docs/openapi/etronium.swagger.json) | сгенерированный swagger (открыть в editor.swagger.io) |
+
+## Контракт
+
+gRPC API определён в [`proto/etronium/v1/etronium.proto`](./proto/etronium/v1/etronium.proto).
+
+Два сервиса:
+- **`SchedulerService`** — клиентский (для tenant CLI).
+- **`LordService`** — для доноров-lord'ов.
+
+Сгенерированный Go лежит в `internal/gen/etronium/v1/`. Swagger — в `docs/openapi/`.
+
+**Регенерация:** `make proto` (нужен `protoc 24+` + Go плагины `protoc-gen-go`,
+`protoc-gen-go-grpc`, `protoc-gen-grpc-gateway`, `protoc-gen-openapiv2`).
 
 ## Статус
 

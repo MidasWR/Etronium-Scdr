@@ -48,3 +48,108 @@
 ---
 
 (будет дополняться по мере принятия решений)
+
+---
+
+## 003 — gRPC как основной протокол (2026-07-19)
+
+**Контекст:** Research предлагает gRPC для scheduler↔lord и tenant↔scheduler. Альтернативы: REST/JSON, message bus (NATS/Kafka), самописный TCP-протокол.
+
+**Решение:** gRPC для всех межсервисных взаимодействий. HTTP/REST используется только как side-channel через grpc-gateway для отладки (`curl`), не как runtime API.
+
+**Альтернативы:**
+- REST/JSON — проще отлаживать, но нет streaming, нет codegen, нет строгого контракта.
+- NATS/Kafka — overkill для MVP, добавляет внешнюю зависимость.
+- Самописный TCP — никогда так не делаем.
+
+**Последствия:**
+- ✅ Codegen для Go-клиента и сервера.
+- ✅ Bidirectional streaming из коробки (нужно для `RunTask`, `StreamTask`).
+- ✅ Строгий proto-контракт — изменения версионируются.
+- ⚠️ Нужен protoc + 4 плагина в dev-окружении (см. Makefile).
+- ⚠️ Для отладки через curl нужен grpc-gateway или grpcurl.
+
+---
+
+## 004 — Два отдельных сервиса в одном proto (2026-07-19)
+
+**Контекст:** Scheduler ↔ Tenant и Scheduler ↔ Lord — это разные потоки данных с разной семантикой (один — публичный, другой — service-to-service). Можно было бы сделать два proto-файла.
+
+**Решение:** Один proto-файл `etronium/v1/etronium.proto` с двумя `service` блоками. Общие типы (`Task`, `Lord`, `TaskStatus`, `ResourceSpec`) переиспользуются.
+
+**Альтернативы:**
+- Два proto-файла (`scheduler.proto`, `lord.proto`) — но тогда общие типы пришлось бы дублировать или выносить в `common.proto` (три файла).
+- Один service — смешивает семантику, плохо для codegen.
+
+**Последствия:**
+- ✅ Один источник правды для типов.
+- ✅ Проще навигация.
+- ⚠️ При желании разделить deploy (например, отдельный `lord-api` сервис) — будет сложно вычленить.
+
+---
+
+## 005 — ULID для task_id и lord_id (2026-07-19)
+
+**Контекст:** UUID v4 (random) vs ULID (sortable). В Phase 3+ понадобится сортировка задач по времени создания, чтобы placement мог учитывать "свежесть" и для эффективной пагинации.
+
+**Решение:** ULID (`github.com/oklog/ulid/v2`) для `task_id` и `lord_id`. UUID v4 (`github.com/google/uuid`) — только для `session_id` если появится.
+
+**Альтернативы:**
+- UUID v4 — проще, но не сортируется (можно добавить `created_at` индекс, но всё равно не k8s-style).
+- Snowflake (Twitter) — требует координации между нодами, overkill.
+- KSUID (segmentio) — аналог ULID, но хуже поддержка в Go.
+
+**Последствия:**
+- ✅ Sortable by creation time → эффективная пагинация через `next_page_token`.
+- ✅ K8s-style ID, привычно.
+- ⚠️ Дополнительная зависимость `github.com/oklog/ulid/v2`.
+
+---
+
+## 006 — OpenAPI генерируется только для документации (2026-07-19)
+
+**Контекст:** grpc-gateway умеет делать HTTP→gRPC маппинг автоматически. Можно поднять REST API параллельно с gRPC.
+
+**Решение:** OpenAPI/swagger генерируется из proto-аннотаций, но **runtime gateway не поднимаем**. Используем только для документации и опциональной отладки через curl.
+
+**Альтернативы:**
+- Поднять grpc-gateway как отдельный бинарь — но это лишний процесс для MVP и второй API для поддержки.
+- Не генерировать swagger вообще — но proto-аннотации (`summary`, `description`) полезны и для кода.
+
+**Последствия:**
+- ✅ Один API (gRPC), меньше поверхность для багов.
+- ✅ Swagger полезен для онбординга и обсуждения контракта.
+- ⚠️ Для отладки через curl придётся либо использовать grpcurl, либо писать тонкий debug-server (Phase 5+).
+
+---
+
+## 007 — StreamTask и RunTask остаются gRPC-only (2026-07-19)
+
+**Контекст:** grpc-gateway не маппит server-streaming RPC на HTTP без хаков (chunked encoding, SSE). Можно попробовать, но это сложно и хрупко.
+
+**Решение:** Server-streaming RPC (`RunTask`, `StreamTask`) — только gRPC. HTTP endpoints покрывают только unary RPC.
+
+**Альтернативы:**
+- Server-Sent Events (SSE) для стриминга через HTTP — можно, но это другой протокол, отдельная реализация. Отложено в Phase 5+.
+- WebSocket — overkill, gRPC уже решает задачу.
+
+**Последствия:**
+- ✅ Простота: streaming = gRPC, unary = gRPC + HTTP gateway.
+- ⚠️ Для демо в браузере (если когда-нибудь появится WebUI) придётся делать gRPC-Web или отдельный streaming endpoint.
+
+---
+
+## 008 — Формат command как repeated string (argv-style) (2026-07-19)
+
+**Контекст:** В research написано `sh -c "echo a; sleep 1; echo b"` одной строкой. Можно было бы передавать command одной строкой, как в docker CLI.
+
+**Решение:** `repeated string command = N;` — argv-style. Например `["sh", "-c", "echo a; sleep 1; echo b"]`. Это совпадает с тем, что containerd ожидает.
+
+**Альтернативы:**
+- Одна строка + shell-парсинг — хрупко (экранирование), небезопасно (нельзя нормально denylist'ить).
+- JSON-массивом строкой — то же самое, но без type-safety.
+
+**Последствия:**
+- ✅ Type-safe, нет shell-injection.
+- ✅ Совпадает с containerd API напрямую.
+- ⚠️ Менее удобно в CLI — `etronium task submit -- sh -c "..."` придётся мапить в argv.
