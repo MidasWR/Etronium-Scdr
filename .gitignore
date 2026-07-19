@@ -1,0 +1,21 @@
+# Go
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Containerd
+/var/lib/containerd/
+
+# Local configs
+.env
+.env.local
+
+# Logs
+*.log
