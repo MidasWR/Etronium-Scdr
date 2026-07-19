@@ -31,34 +31,154 @@ var _ = runtime.String
 var _ = utilities.NewDoubleArray
 var _ = metadata.Join
 
-func request_SchedulerService_SubmitTask_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq SubmitTaskRequest
+func request_SchedulerService_Spawn_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq SpawnRequest
 	var metadata runtime.ServerMetadata
 
 	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 
-	msg, err := client.SubmitTask(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	msg, err := client.Spawn(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
 
-func local_request_SchedulerService_SubmitTask_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq SubmitTaskRequest
+func local_request_SchedulerService_Spawn_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq SpawnRequest
 	var metadata runtime.ServerMetadata
 
 	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 
-	msg, err := server.SubmitTask(ctx, &protoReq)
+	msg, err := server.Spawn(ctx, &protoReq)
 	return msg, metadata, err
 
 }
 
-func request_SchedulerService_GetTask_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq GetTaskRequest
+func request_SchedulerService_Kill_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq KillRequest
+	var metadata runtime.ServerMetadata
+
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["process_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "process_id")
+	}
+
+	protoReq.ProcessId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "process_id", err)
+	}
+
+	msg, err := client.Kill(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_SchedulerService_Kill_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq KillRequest
+	var metadata runtime.ServerMetadata
+
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["process_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "process_id")
+	}
+
+	protoReq.ProcessId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "process_id", err)
+	}
+
+	msg, err := server.Kill(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
+func request_SchedulerService_Wait_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq WaitRequest
+	var metadata runtime.ServerMetadata
+
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["process_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "process_id")
+	}
+
+	protoReq.ProcessId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "process_id", err)
+	}
+
+	msg, err := client.Wait(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_SchedulerService_Wait_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq WaitRequest
+	var metadata runtime.ServerMetadata
+
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["process_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "process_id")
+	}
+
+	protoReq.ProcessId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "process_id", err)
+	}
+
+	msg, err := server.Wait(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
+func request_SchedulerService_GetProcess_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq GetProcessRequest
 	var metadata runtime.ServerMetadata
 
 	var (
@@ -68,23 +188,23 @@ func request_SchedulerService_GetTask_0(ctx context.Context, marshaler runtime.M
 		_   = err
 	)
 
-	val, ok = pathParams["task_id"]
+	val, ok = pathParams["process_id"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "task_id")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "process_id")
 	}
 
-	protoReq.TaskId, err = runtime.String(val)
+	protoReq.ProcessId, err = runtime.String(val)
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "task_id", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "process_id", err)
 	}
 
-	msg, err := client.GetTask(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	msg, err := client.GetProcess(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
 
-func local_request_SchedulerService_GetTask_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq GetTaskRequest
+func local_request_SchedulerService_GetProcess_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq GetProcessRequest
 	var metadata runtime.ServerMetadata
 
 	var (
@@ -94,59 +214,59 @@ func local_request_SchedulerService_GetTask_0(ctx context.Context, marshaler run
 		_   = err
 	)
 
-	val, ok = pathParams["task_id"]
+	val, ok = pathParams["process_id"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "task_id")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "process_id")
 	}
 
-	protoReq.TaskId, err = runtime.String(val)
+	protoReq.ProcessId, err = runtime.String(val)
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "task_id", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "process_id", err)
 	}
 
-	msg, err := server.GetTask(ctx, &protoReq)
+	msg, err := server.GetProcess(ctx, &protoReq)
 	return msg, metadata, err
 
 }
 
 var (
-	filter_SchedulerService_ListTasks_0 = &utilities.DoubleArray{Encoding: map[string]int{}, Base: []int(nil), Check: []int(nil)}
+	filter_SchedulerService_ListProcesses_0 = &utilities.DoubleArray{Encoding: map[string]int{}, Base: []int(nil), Check: []int(nil)}
 )
 
-func request_SchedulerService_ListTasks_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq ListTasksRequest
+func request_SchedulerService_ListProcesses_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq ListProcessesRequest
 	var metadata runtime.ServerMetadata
 
 	if err := req.ParseForm(); err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
-	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_SchedulerService_ListTasks_0); err != nil {
+	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_SchedulerService_ListProcesses_0); err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 
-	msg, err := client.ListTasks(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	msg, err := client.ListProcesses(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
 
-func local_request_SchedulerService_ListTasks_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq ListTasksRequest
+func local_request_SchedulerService_ListProcesses_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq ListProcessesRequest
 	var metadata runtime.ServerMetadata
 
 	if err := req.ParseForm(); err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
-	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_SchedulerService_ListTasks_0); err != nil {
+	if err := runtime.PopulateQueryParameters(&protoReq, req.Form, filter_SchedulerService_ListProcesses_0); err != nil {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 
-	msg, err := server.ListTasks(ctx, &protoReq)
+	msg, err := server.ListProcesses(ctx, &protoReq)
 	return msg, metadata, err
 
 }
 
-func request_SchedulerService_CancelTask_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq CancelTaskRequest
+func request_SchedulerService_Migrate_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq MigrateRequest
 	var metadata runtime.ServerMetadata
 
 	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
@@ -160,23 +280,23 @@ func request_SchedulerService_CancelTask_0(ctx context.Context, marshaler runtim
 		_   = err
 	)
 
-	val, ok = pathParams["task_id"]
+	val, ok = pathParams["process_id"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "task_id")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "process_id")
 	}
 
-	protoReq.TaskId, err = runtime.String(val)
+	protoReq.ProcessId, err = runtime.String(val)
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "task_id", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "process_id", err)
 	}
 
-	msg, err := client.CancelTask(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	msg, err := client.Migrate(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
 
-func local_request_SchedulerService_CancelTask_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq CancelTaskRequest
+func local_request_SchedulerService_Migrate_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq MigrateRequest
 	var metadata runtime.ServerMetadata
 
 	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
@@ -190,77 +310,17 @@ func local_request_SchedulerService_CancelTask_0(ctx context.Context, marshaler 
 		_   = err
 	)
 
-	val, ok = pathParams["task_id"]
+	val, ok = pathParams["process_id"]
 	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "task_id")
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "process_id")
 	}
 
-	protoReq.TaskId, err = runtime.String(val)
+	protoReq.ProcessId, err = runtime.String(val)
 	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "task_id", err)
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "process_id", err)
 	}
 
-	msg, err := server.CancelTask(ctx, &protoReq)
-	return msg, metadata, err
-
-}
-
-func request_SchedulerService_ControlTask_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq ControlTaskRequest
-	var metadata runtime.ServerMetadata
-
-	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
-	}
-
-	var (
-		val string
-		ok  bool
-		err error
-		_   = err
-	)
-
-	val, ok = pathParams["task_id"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "task_id")
-	}
-
-	protoReq.TaskId, err = runtime.String(val)
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "task_id", err)
-	}
-
-	msg, err := client.ControlTask(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
-	return msg, metadata, err
-
-}
-
-func local_request_SchedulerService_ControlTask_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
-	var protoReq ControlTaskRequest
-	var metadata runtime.ServerMetadata
-
-	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
-	}
-
-	var (
-		val string
-		ok  bool
-		err error
-		_   = err
-	)
-
-	val, ok = pathParams["task_id"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "task_id")
-	}
-
-	protoReq.TaskId, err = runtime.String(val)
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "task_id", err)
-	}
-
-	msg, err := server.ControlTask(ctx, &protoReq)
+	msg, err := server.Migrate(ctx, &protoReq)
 	return msg, metadata, err
 
 }
@@ -297,6 +357,66 @@ func local_request_SchedulerService_ListLords_0(ctx context.Context, marshaler r
 	}
 
 	msg, err := server.ListLords(ctx, &protoReq)
+	return msg, metadata, err
+
+}
+
+func request_SchedulerService_PushFile_0(ctx context.Context, marshaler runtime.Marshaler, client SchedulerServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq PushFileRequest
+	var metadata runtime.ServerMetadata
+
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["process_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "process_id")
+	}
+
+	protoReq.ProcessId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "process_id", err)
+	}
+
+	msg, err := client.PushFile(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	return msg, metadata, err
+
+}
+
+func local_request_SchedulerService_PushFile_0(ctx context.Context, marshaler runtime.Marshaler, server SchedulerServiceServer, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
+	var protoReq PushFileRequest
+	var metadata runtime.ServerMetadata
+
+	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	var (
+		val string
+		ok  bool
+		err error
+		_   = err
+	)
+
+	val, ok = pathParams["process_id"]
+	if !ok {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "process_id")
+	}
+
+	protoReq.ProcessId, err = runtime.String(val)
+	if err != nil {
+		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "process_id", err)
+	}
+
+	msg, err := server.PushFile(ctx, &protoReq)
 	return msg, metadata, err
 
 }
@@ -454,7 +574,7 @@ func local_request_LordService_AcknowledgeLazyDeath_0(ctx context.Context, marsh
 // GRPC interceptors will not work for this type of registration. To use interceptors, you must use the "runtime.WithMiddlewares" option in the "runtime.NewServeMux" call.
 func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.ServeMux, server SchedulerServiceServer) error {
 
-	mux.Handle("POST", pattern_SchedulerService_SubmitTask_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("POST", pattern_SchedulerService_Spawn_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		var stream runtime.ServerTransportStream
@@ -462,12 +582,12 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/SubmitTask", runtime.WithHTTPPathPattern("/api/v1/tasks"))
+		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/Spawn", runtime.WithHTTPPathPattern("/api/v1/processes"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := local_request_SchedulerService_SubmitTask_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		resp, md, err := local_request_SchedulerService_Spawn_0(annotatedContext, inboundMarshaler, server, req, pathParams)
 		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
@@ -475,11 +595,11 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 			return
 		}
 
-		forward_SchedulerService_SubmitTask_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_SchedulerService_Spawn_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
-	mux.Handle("GET", pattern_SchedulerService_GetTask_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("POST", pattern_SchedulerService_Kill_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		var stream runtime.ServerTransportStream
@@ -487,12 +607,12 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/GetTask", runtime.WithHTTPPathPattern("/api/v1/tasks/{task_id}"))
+		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/Kill", runtime.WithHTTPPathPattern("/api/v1/processes/{process_id}/kill"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := local_request_SchedulerService_GetTask_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		resp, md, err := local_request_SchedulerService_Kill_0(annotatedContext, inboundMarshaler, server, req, pathParams)
 		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
@@ -500,11 +620,11 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 			return
 		}
 
-		forward_SchedulerService_GetTask_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_SchedulerService_Kill_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
-	mux.Handle("GET", pattern_SchedulerService_ListTasks_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("POST", pattern_SchedulerService_Wait_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		var stream runtime.ServerTransportStream
@@ -512,12 +632,12 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/ListTasks", runtime.WithHTTPPathPattern("/api/v1/tasks"))
+		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/Wait", runtime.WithHTTPPathPattern("/api/v1/processes/{process_id}/wait"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := local_request_SchedulerService_ListTasks_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		resp, md, err := local_request_SchedulerService_Wait_0(annotatedContext, inboundMarshaler, server, req, pathParams)
 		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
@@ -525,11 +645,11 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 			return
 		}
 
-		forward_SchedulerService_ListTasks_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_SchedulerService_Wait_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
-	mux.Handle("POST", pattern_SchedulerService_CancelTask_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("GET", pattern_SchedulerService_GetProcess_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		var stream runtime.ServerTransportStream
@@ -537,12 +657,12 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/CancelTask", runtime.WithHTTPPathPattern("/api/v1/tasks/{task_id}/cancel"))
+		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/GetProcess", runtime.WithHTTPPathPattern("/api/v1/processes/{process_id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := local_request_SchedulerService_CancelTask_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		resp, md, err := local_request_SchedulerService_GetProcess_0(annotatedContext, inboundMarshaler, server, req, pathParams)
 		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
@@ -550,11 +670,11 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 			return
 		}
 
-		forward_SchedulerService_CancelTask_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_SchedulerService_GetProcess_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
-	mux.Handle("POST", pattern_SchedulerService_ControlTask_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("GET", pattern_SchedulerService_ListProcesses_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		var stream runtime.ServerTransportStream
@@ -562,12 +682,12 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/ControlTask", runtime.WithHTTPPathPattern("/api/v1/tasks/{task_id}/control"))
+		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/ListProcesses", runtime.WithHTTPPathPattern("/api/v1/processes"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := local_request_SchedulerService_ControlTask_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		resp, md, err := local_request_SchedulerService_ListProcesses_0(annotatedContext, inboundMarshaler, server, req, pathParams)
 		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
@@ -575,7 +695,32 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 			return
 		}
 
-		forward_SchedulerService_ControlTask_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_SchedulerService_ListProcesses_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("POST", pattern_SchedulerService_Migrate_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		var err error
+		var annotatedContext context.Context
+		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/Migrate", runtime.WithHTTPPathPattern("/api/v1/processes/{process_id}/migrate"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_SchedulerService_Migrate_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_SchedulerService_Migrate_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -601,6 +746,31 @@ func RegisterSchedulerServiceHandlerServer(ctx context.Context, mux *runtime.Ser
 		}
 
 		forward_SchedulerService_ListLords_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("POST", pattern_SchedulerService_PushFile_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		var stream runtime.ServerTransportStream
+		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		var err error
+		var annotatedContext context.Context
+		annotatedContext, err = runtime.AnnotateIncomingContext(ctx, mux, req, "/etronium.v1.SchedulerService/PushFile", runtime.WithHTTPPathPattern("/api/v1/processes/{process_id}/files"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := local_request_SchedulerService_PushFile_0(annotatedContext, inboundMarshaler, server, req, pathParams)
+		md.HeaderMD, md.TrailerMD = metadata.Join(md.HeaderMD, stream.Header()), metadata.Join(md.TrailerMD, stream.Trailer())
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_SchedulerService_PushFile_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -730,113 +900,135 @@ func RegisterSchedulerServiceHandler(ctx context.Context, mux *runtime.ServeMux,
 // "SchedulerServiceClient" to call the correct interceptors. This client ignores the HTTP middlewares.
 func RegisterSchedulerServiceHandlerClient(ctx context.Context, mux *runtime.ServeMux, client SchedulerServiceClient) error {
 
-	mux.Handle("POST", pattern_SchedulerService_SubmitTask_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("POST", pattern_SchedulerService_Spawn_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/SubmitTask", runtime.WithHTTPPathPattern("/api/v1/tasks"))
+		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/Spawn", runtime.WithHTTPPathPattern("/api/v1/processes"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := request_SchedulerService_SubmitTask_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		resp, md, err := request_SchedulerService_Spawn_0(annotatedContext, inboundMarshaler, client, req, pathParams)
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
 			return
 		}
 
-		forward_SchedulerService_SubmitTask_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_SchedulerService_Spawn_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
-	mux.Handle("GET", pattern_SchedulerService_GetTask_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("POST", pattern_SchedulerService_Kill_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/GetTask", runtime.WithHTTPPathPattern("/api/v1/tasks/{task_id}"))
+		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/Kill", runtime.WithHTTPPathPattern("/api/v1/processes/{process_id}/kill"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := request_SchedulerService_GetTask_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		resp, md, err := request_SchedulerService_Kill_0(annotatedContext, inboundMarshaler, client, req, pathParams)
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
 			return
 		}
 
-		forward_SchedulerService_GetTask_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_SchedulerService_Kill_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
-	mux.Handle("GET", pattern_SchedulerService_ListTasks_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("POST", pattern_SchedulerService_Wait_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/ListTasks", runtime.WithHTTPPathPattern("/api/v1/tasks"))
+		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/Wait", runtime.WithHTTPPathPattern("/api/v1/processes/{process_id}/wait"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := request_SchedulerService_ListTasks_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		resp, md, err := request_SchedulerService_Wait_0(annotatedContext, inboundMarshaler, client, req, pathParams)
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
 			return
 		}
 
-		forward_SchedulerService_ListTasks_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_SchedulerService_Wait_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
-	mux.Handle("POST", pattern_SchedulerService_CancelTask_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("GET", pattern_SchedulerService_GetProcess_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/CancelTask", runtime.WithHTTPPathPattern("/api/v1/tasks/{task_id}/cancel"))
+		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/GetProcess", runtime.WithHTTPPathPattern("/api/v1/processes/{process_id}"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := request_SchedulerService_CancelTask_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		resp, md, err := request_SchedulerService_GetProcess_0(annotatedContext, inboundMarshaler, client, req, pathParams)
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
 			return
 		}
 
-		forward_SchedulerService_CancelTask_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_SchedulerService_GetProcess_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
-	mux.Handle("POST", pattern_SchedulerService_ControlTask_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+	mux.Handle("GET", pattern_SchedulerService_ListProcesses_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/ControlTask", runtime.WithHTTPPathPattern("/api/v1/tasks/{task_id}/control"))
+		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/ListProcesses", runtime.WithHTTPPathPattern("/api/v1/processes"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
 		}
-		resp, md, err := request_SchedulerService_ControlTask_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		resp, md, err := request_SchedulerService_ListProcesses_0(annotatedContext, inboundMarshaler, client, req, pathParams)
 		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
 			return
 		}
 
-		forward_SchedulerService_ControlTask_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+		forward_SchedulerService_ListProcesses_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
+	mux.Handle("POST", pattern_SchedulerService_Migrate_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		var err error
+		var annotatedContext context.Context
+		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/Migrate", runtime.WithHTTPPathPattern("/api/v1/processes/{process_id}/migrate"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_SchedulerService_Migrate_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_SchedulerService_Migrate_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
 
 	})
 
@@ -862,35 +1054,65 @@ func RegisterSchedulerServiceHandlerClient(ctx context.Context, mux *runtime.Ser
 
 	})
 
+	mux.Handle("POST", pattern_SchedulerService_PushFile_0, func(w http.ResponseWriter, req *http.Request, pathParams map[string]string) {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
+		var err error
+		var annotatedContext context.Context
+		annotatedContext, err = runtime.AnnotateContext(ctx, mux, req, "/etronium.v1.SchedulerService/PushFile", runtime.WithHTTPPathPattern("/api/v1/processes/{process_id}/files"))
+		if err != nil {
+			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
+			return
+		}
+		resp, md, err := request_SchedulerService_PushFile_0(annotatedContext, inboundMarshaler, client, req, pathParams)
+		annotatedContext = runtime.NewServerMetadataContext(annotatedContext, md)
+		if err != nil {
+			runtime.HTTPError(annotatedContext, mux, outboundMarshaler, w, req, err)
+			return
+		}
+
+		forward_SchedulerService_PushFile_0(annotatedContext, mux, outboundMarshaler, w, req, resp, mux.GetForwardResponseOptions()...)
+
+	})
+
 	return nil
 }
 
 var (
-	pattern_SchedulerService_SubmitTask_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "tasks"}, ""))
+	pattern_SchedulerService_Spawn_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "processes"}, ""))
 
-	pattern_SchedulerService_GetTask_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"api", "v1", "tasks", "task_id"}, ""))
+	pattern_SchedulerService_Kill_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 2, 4}, []string{"api", "v1", "processes", "process_id", "kill"}, ""))
 
-	pattern_SchedulerService_ListTasks_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "tasks"}, ""))
+	pattern_SchedulerService_Wait_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 2, 4}, []string{"api", "v1", "processes", "process_id", "wait"}, ""))
 
-	pattern_SchedulerService_CancelTask_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 2, 4}, []string{"api", "v1", "tasks", "task_id", "cancel"}, ""))
+	pattern_SchedulerService_GetProcess_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"api", "v1", "processes", "process_id"}, ""))
 
-	pattern_SchedulerService_ControlTask_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 2, 4}, []string{"api", "v1", "tasks", "task_id", "control"}, ""))
+	pattern_SchedulerService_ListProcesses_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "processes"}, ""))
+
+	pattern_SchedulerService_Migrate_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 2, 4}, []string{"api", "v1", "processes", "process_id", "migrate"}, ""))
 
 	pattern_SchedulerService_ListLords_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "lords"}, ""))
+
+	pattern_SchedulerService_PushFile_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 2, 4}, []string{"api", "v1", "processes", "process_id", "files"}, ""))
 )
 
 var (
-	forward_SchedulerService_SubmitTask_0 = runtime.ForwardResponseMessage
+	forward_SchedulerService_Spawn_0 = runtime.ForwardResponseMessage
 
-	forward_SchedulerService_GetTask_0 = runtime.ForwardResponseMessage
+	forward_SchedulerService_Kill_0 = runtime.ForwardResponseMessage
 
-	forward_SchedulerService_ListTasks_0 = runtime.ForwardResponseMessage
+	forward_SchedulerService_Wait_0 = runtime.ForwardResponseMessage
 
-	forward_SchedulerService_CancelTask_0 = runtime.ForwardResponseMessage
+	forward_SchedulerService_GetProcess_0 = runtime.ForwardResponseMessage
 
-	forward_SchedulerService_ControlTask_0 = runtime.ForwardResponseMessage
+	forward_SchedulerService_ListProcesses_0 = runtime.ForwardResponseMessage
+
+	forward_SchedulerService_Migrate_0 = runtime.ForwardResponseMessage
 
 	forward_SchedulerService_ListLords_0 = runtime.ForwardResponseMessage
+
+	forward_SchedulerService_PushFile_0 = runtime.ForwardResponseMessage
 )
 
 // RegisterLordServiceHandlerFromEndpoint is same as RegisterLordServiceHandler but

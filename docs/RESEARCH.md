@@ -1,71 +1,111 @@
 # Etronium MVP — Исследование по минимальной реализации
 
-> Цель: дать работающее демо концепции "single runtime поверх распределённого железа"
-> Стек: Go (MVP) → Rust/C++ для hot path позже
-> Дата: 2026-07-19
+> **STATUS (2026-07-20):** RE-FRAMED. Этот документ изначально был про k8s-class scheduler (Nomad/BOINC).
+> Сейчас проект перепозиционирован на **MOSIX-class SSI без kernel patches** (см. ADR 016 в DECISIONS.md).
+> Ниже — оригинальный research с пометками, что изменилось.
+
+## Что изменилось
+
+| Было (research 2026-07-19) | Стало (ADR 2026-07-20) |
+|---|---|
+| Container runtime = **containerd** | **cgroups v2 + libcontainer + CRIU** (без containerd) |
+| OCI-совместимые контейнеры (Docker images) | **POSIX процессы** (не контейнеры), без OCI |
+| Один тенант = одна сессия на одном лорде | **1 tenant : N lords** (fan-out через миграцию) |
+| Placement = weighted score | **NUMA-style scheduler**, placement эволюционирует от trivial к weighted |
+| HashiCorp Nomad как reference | **MOSIX/OpenMosix/Kerrighed** как reference |
+| Гоняем задачи | **Гоняем процессы**, мигрируем между lord'ами |
+| Task queue | **Process table** в scheduler'е |
+
+Подробности — в `DECISIONS.md` (ADR 016-023) и `ARCHITECTURE.md`.
 
 ---
 
-## TL;DR — 7 ключевых решений
+## Оригинальный research (2026-07-19, частично отвергнут)
 
-| # | Решение | Обоснование |
-|---|---------|-------------|
-| 1 | Scheduler — single binary, in-memory state + WAL | HA/Raft это Phase 2+, для демо over-engineering |
-| 2 | Container runtime = **containerd** (не runc напрямую) | Баланс контроля и готовых абстракций. rурц — слишком низкий уровень, Docker — слишком высокий |
-| 3 | gRPC для scheduler↔lord и tenant↔scheduler | Контракт, streaming, codegen. Без message bus для MVP |
-| 4 | Один тенант = одна сессия на одном лорде (для MVP) | Избегает многопользовательского шума на стороне лорда |
-| 5 | Placement = weighted score: `rep × (1 - load) × locality` | Просто, детерминировано, легко расширять |
-| 6 | OCI-совместимые контейнеры (Docker images) | Не изобретаем формат, пользуемся готовой инфраструктурой |
-| 7 | Linux-only для MVP | macOS/Windows lords — Phase 3+ (через Lima/WSL2) |
+### TL;DR — 7 ключевых решений
+
+| # | Решение | Обоснование | Статус |
+|---|---------|-------------|--------|
+| 1 | Scheduler — single binary, in-memory state + WAL | HA/Raft это Phase 2+, для демо over-engineering | ✅ Принято |
+| 2 | Container runtime = **containerd** (не runc напрямую) | Баланс контроля и готовых абстракций | ❌ Отвергнуто — перешли на cgroups v2 + CRIU |
+| 3 | gRPC для scheduler↔lord и tenant↔scheduler | Контракт, streaming, codegen | ✅ Принято |
+| 4 | Один тенант = одна сессия на одном лорде | Избегает многопользовательского шума | ❌ Отвергнуто — 1 tenant : N lords |
+| 5 | Placement = weighted score: `rep × (1 - load) × locality` | Просто, детерминировано | ✅ Принято (как Phase 2+) |
+| 6 | OCI-совместимые контейнеры | Не изобретаем формат | ❌ Отвергнуто — POSIX процессы |
+| 7 | Linux-only для MVP | macOS/Windows lords — Phase 3+ | ✅ Принято |
 
 ---
 
-## Reference projects — что изучать в первую очередь
+## Reference projects — что изучать в первую очередь (ОБНОВЛЕНО)
 
 ### Tier 1 (must read, прямой relevance)
 
-**HashiCorp Nomad** (Go, ~40k LOC scheduler)
-Почему: ближайший архитектурный аналог, написан на Go, отличная документация, open source.
+**MOSIX / OpenMosix / Kerrighed** — прямые исторические аналоги.
+- MOSIX (Bar-Ilan Univ, 1999–2008): Linux kernel patches для process migration across cluster
+- OpenMosix: форк MOSIX, BSD-licensed
+- Kerrighed (INRIA, 2000s): SSI на Linux, cluster-aware scheduler
+
 Что изучать:
-- `nomad/scheduler/scheduler.go` — placement logic
-- `nomad/scheduler/feasible.go` — filter phase
-- `nomad/eval_broker.go` — очередь evaluations
-- `nomad/state/` — in-memory state store pattern (хотя memdb — overkill для MVP)
-- `client/allocrunner/taskrunner/` — как task живёт на клиенте
-- `drivers/raw_exec/`, `drivers/exec/` — простейшие task drivers
+- Как они реализовывали process migration (в kernel, до CRIU)
+- Distributed scheduling decisions (preemptive migration по memory pressure)
+- Single System Image semantics (глобальный PID namespace)
 
-Что НЕ копировать: Raft consensus, Consul integration, ACL system, Vault integration — это всё enterprise features, не нужны для MVP.
+Что НЕ копировать: kernel patches (мы делаем user-space).
 
-**containerd** (Go, ~150k LOC, но модульно)
-Почему: золотая середина между runc и Docker. Используется K8s, production-ready.
+**CRIU** (Checkpoint/Restore In Userspace)
+- Userspace checkpoint/restore, не требует kernel patches
+- Production-ready, ~5MB бинарь
+- Используется в Kubernetes, OpenVZ, Docker (для live migration)
+
 Что изучать:
-- Архитектура shim — как изолировать runtime от containerd daemon
-- CRI plugin — если захочешь K8s-compatible API
-- Snapshotter — как делать overlayfs для rootfs
+- Какие процессы поддерживаются, какие нет
+- Performance overhead checkpoint/restore
+- Reconnect semantics после restore
 
-**runc + libcontainer** (Go, ~20k LOC)
-Почему: низкий уровень container execution. Полезно понять что под капотом, но напрямую использовать не надо.
+**libcontainer** (из runc, теперь в отдельном пакете)
+- Go-обёртка над cgroups, namespaces, capabilities
+- Используется в Docker, Podman, containerd
+
+Что изучать:
+- cgroup v2 API через Go
+- Namespace setup
+- Capabilities bounding
 
 ### Tier 2 (для понимания domain'а)
 
-**Fly.io FlyD** (Go, закрытый) + публичные посты
-- Decentralized orchestrator без центрального scheduler
-- Fly Machines = Firecracker microVMs
-- Pilot = init process внутри VM
-- Урок: scheduler может быть распределённым, не обязательно одна большая нода
+**Sprite** (UC Berkeley, 1980s)
+- Оригинальная distributed OS с process migration
+- Academic papers: "The Sprite Network Operating System" (1988)
+- Урок: как UNIX-семантика переносится в distributed среду
 
-**BOINC** (C++, открытый)
-- Золотой стандарт volunteer computing
-- HTTP RPC между client и server (вместо gRPC)
-- Replication для verification результатов
-- Урок: как работать с гетерогенными и ненадёжными донорами
+**Locus** (UCSB, 1980s)
+- Distributed Unix
+- Transparent network filesystem
+- Урок: tradeoff между transparency и performance
 
-### Tier 3 (концептуально)
+**Bproc** (Beowulf project)
+- Process migration across Linux cluster (2000s)
+- User-space implementation, без kernel patches (в отличие от MOSIX)
+- Урок: то что мы делаем ближе к Bproc чем к MOSIX
 
-- **Mesos** — offers/resources abstraction, two-level scheduling
-- **Borg/Omega** (Google, по статьям) — placement, optimistic concurrency
-- **Sparrow** (Berkeley) — power of two choices для batch
-- **Ray** — distributed actor system, хорошие паттерны для task lifecycle
+**Kerrighed** (read paper, не source)
+- Single System Image на Linux
+- Container-based isolation
+- Урок: что значит "SSI" с точки зрения прикладного программиста
+
+### Tier 3 (концептуально, для вдохновения)
+
+- **Mesos** — offers/resources abstraction, two-level scheduling (для понимания placement)
+- **Sparrow** (Berkeley) — power of two choices для batch scheduling
+- **Borg/Omega** (Google) — placement, optimistic concurrency (по статьям)
+
+### Tier 4 (ОТВЕРГНУТЫ как wrong abstraction level)
+
+- ❌ **HashiCorp Nomad** — task-queue + container driver. Не NUMA-class.
+- ❌ **containerd** — заменён на cgroups v2 + CRIU + libcontainer
+- ❌ **BOINC** — volunteer computing, слишком высокоуровневый
+- ❌ **Ray** — distributed actor system, другая семантика
+- ❌ **k8s** — оркестратор контейнеров, не процессов
 
 ---
 

@@ -1,71 +1,72 @@
 # Open Questions — требуют решения до старта
 
-> Источник: `docs/RESEARCH.md`, раздел "Open questions". Здесь — наш трекинг.
-> После ответа на вопрос — статус ✅ и ссылка на решение в DECISIONS.
+> Источник: `docs/RESEARCH.md` + `docs/DECISIONS.md`. Здесь — нерешённые вопросы.
 
----
+## Архитектурные (все решены на 2026-07-20)
 
-## 1. Один лорд = один тенант, или несколько тенантов на одном лорде?
+| # | Вопрос | Решение | ADR |
+|---|---|---|---|
+| 1 | 1 tenant : 1 lord vs 1 : N | **1 tenant : N lords** | 009 |
+| 2 | Persistent storage | **Local copy** (статика с scheduler'а, динамика — file transfer) | 019 |
+| 3 | Image registry | Свой `midaswr` | 011 |
+| 4 | Auth | Pre-shared token в gRPC metadata | 012 |
+| 5 | Streaming | Стриминг IO с kill/restart через `Migrate`/`Kill` | 017 |
+| 6 | Сколько лордов | Multi-lord с Phase 0, placement эволюционирует | 014 |
+| 7 | Где запускать | Дизайн не зависит от физики, решим в Phase 5 (compose) | — |
+| 8 | Proto контракт | POSIX-like process API, см. `proto/etronium/v1/etronium.proto` | 017 |
+| 9 | Containerd | **Не используем** — перешли на cgroups v2 + libcontainer + CRIU | 016 |
+| 10 | WAL | Отложено в Phase 5 (Persistence), Phase 0 = pure in-memory | 023 |
 
-**Рекомендация из research:** для MVP один тенант на лорд.
-**Наш статус:** ✅ **РЕШЕНО 2026-07-19.** Tenant → N lords (fan-out), не lord → N tenants.
-См. ADR 009 — `1 tenant : N lords` placement.
+## Технические (решаются при старте соответствующей фазы)
 
-## 2. Persistent storage для тенантских файлов?
+### 11. Какой runtime для fork/exec в Phase 0?
 
-**Рекомендация из research:** в MVP — нет. Stateless containers.
-**Наш статус:** ✅ **РЕШЕНО 2026-07-19.**
-Основа (статика) — на stateless сервере scheduler'а, отдаётся через volume mount в lord'а.
-Динамика — защищённая DFS, доступ по pre-shared ключу.
-См. ADR 010 + `VolumeMount` в proto.
+**Статус:** 🤔 Phase 0. `os/exec` (просто) или libcontainer (сразу с namespace/cgroup)?
+**Рекомендация:** `os/exec` для Phase 0. libcontainer в Phase 1 когда нужны namespaces.
 
-## 3. Image registry — свой или публичный?
+### 12. Как лорд делает I/O capture?
 
-**Рекомендация из research:** публичный (Docker Hub). Lord делает `containerd.Pull(image)`.
-**Наш статус:** ✅ **РЕШЕНО 2026-07-19.** Свой — `midaswr`, ключ на машине есть.
-См. ADR 011 — приватный registry.
+**Статус:** 🤔 Phase 0. `cmd.StdoutPipe` + чтение в горутине? Или ring buffer в памяти и stream по запросу?
+**Рекомендация:** ring buffer (8MB default) + stream по запросу через StreamProcessIO.
 
-## 4. Auth на API — есть или нет?
+### 13. CRIU версия и зависимости?
 
-**Рекомендация из research:** для MVP — простой pre-shared token в gRPC metadata.
-**Наш статус:** ✅ **РЕШЕНО 2026-07-19.** MVP — общий токен хватит.
-См. ADR 012 — формат pre-shared token.
+**Статус:** 🤔 Phase 3.
+- CRIU ~5MB, есть в стандартных Ubuntu репах (`apt install criu`)
+- Нужен ли нам CRIU daemon или CLI mode? CLI проще для MVP.
+- Какой процент реальных процессов поддерживается — надо проверять на демо-нагрузке.
 
-## 5. Streaming vs batch output?
+### 14. Как измерять memory pressure?
 
-**Рекомендация из research:** streaming через gRPC bidirectional stream. Batch как fallback.
-**Наш статус:** ✅ **РЕШЕНО 2026-07-19.** Стриминг батчей с kill/restart/replace.
-См. ADR 013 + `ControlTask` RPC.
+**Статус:** 🤔 Phase 2. По heartbeat'ам (сэмплинг 10s) или PSI pressure stalls из `/proc/pressure/*`?
+**Рекомендация:** heartbeat для MVP (проще), PSI в Phase 4.
 
-## 6. Какой минимум лордов для осмысленного демо?
+### 15. Как реализовать file transfer peer-to-peer?
 
-**Рекомендация из research:** 3 лорда.
-**Наш статус:** ✅ **РЕШЕНО 2026-07-19.** Сразу закладываем динамику под N.
-Multi-lord и placement — с Phase 0, не Phase 3.
-См. ADR 014.
+**Статус:** 🤔 Phase 4. Streaming по gRPC, или HTTP с chunked transfer, или просто scp?
+**Рекомендация:** gRPC streaming с offset/size для resume. Если lord'ы в одной L2 — напрямую, иначе relay.
 
-## 7. Где запускать lord'ов для dev/demo?
+### 16. Как лорд узнаёт про invalidation кэша?
 
-**Варианты из research:**
-- 3 VM на одной машине (VirtualBox/UTM)
-- 3 контейнера через Docker-in-Docker
-- 3 разных физических машины
-- 3 процесса на одной машине с разными cgroup scopes
+**Статус:** 🤔 Phase 4. Push от scheduler при `InvalidateFileCache` или pull от lord'а по TTL?
+**Рекомендация:** push (explicit invalidation) + TTL safety net.
 
-**Наш статус:** ✅ **РЕШЕНО 2026-07-19.** Дизайн не зависит от физики, решим по месту в Phase 5 (compose).
+### 17. Multi-tenant в одном cgroup tree?
 
-## 8. Какой минимальный proto-контракт для Phase 0?
+**Статус:** 🤔 Phase 1. Под-папки на каждый tenant внутри lord'а?
+**Рекомендация:** да, `/sys/fs/cgroup/etronium/<tenant_id>/<process_id>/`.
 
-**Статус:** ✅ **РЕШЕНО 2026-07-19.** См. `proto/etronium/v1/etronium.proto` и `docs/PROTO.md`.
-- В proto определён полный контракт на все фазы.
-- Phase 0 будет реализовывать подмножество: `Register`, `Heartbeat`, `SubmitTask`, `GetTask`, `ListTasks` (unary).
-- Streaming RPC (`RunTask`, `StreamTask`) — Phase 1+.
-- Основа общения и интерфейс управления scheduler'ом.
+### 18. Process group / session для spawn?
 
-## 9. Containerd — как ставить и где хранить state?
+**Статус:** 🤔 Phase 0. POSIX требует PGID/SID. Создаём свою session или присоединяем к существующей?
+**Рекомендация:** каждый Spawn = новая session (setsid), PGID = PID. Просто и предсказуемо.
 
-**Статус:** ⏳ **ОТЛОЖЕНО.** Не блокирует Phase 0. Решим в Phase 1 когда дойдём до runtime.
+### 19. Graceful shutdown lord'а?
 
-## 10. WAL формат — какой?
+**Статус:** 🤔 Phase 5. SIGTERM → drain активных → exit. За сколько секунд drain?
+**Рекомендация:** 30s default, configurable.
 
-**Статус:** ⏳ **ОТЛОЖЕНО.** Не блокирует Phase 0. Решим перед стартом Phase 0.
+### 20. Как scheduler восстанавливается после crash (WAL replay)?
+
+**Статус:** 🤔 Phase 5. Если in-memory потерян, lord'ы должны заново зарегистрироваться, tenant'ы — переподключиться. Процессы RUNNING — orphan'ы, можно их re-discover через heartbeat.
+**Рекомендация:** при старте scheduler помечает все процессы как UNKNOWN, ждёт heartbeat'ов от lord'ов чтобы понять какие живы. TENANT не замечает ничего (retry на любой RPC).

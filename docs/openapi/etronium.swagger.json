@@ -2,8 +2,8 @@
   "swagger": "2.0",
   "info": {
     "title": "Etronium-Scdr API",
-    "description": "Single-runtime over distributed machines. Scheduler coordinates lords (donors) that execute tenant tasks in OCI containers via containerd. gRPC is the primary protocol; OpenAPI is documentation-only.",
-    "version": "v1",
+    "description": "MOSIX-class Single System Image over Linux user-space. Scheduler as NUMA scheduler, lords as cores, processes as threads.",
+    "version": "v2",
     "contact": {
       "name": "Etronium-Scdr"
     }
@@ -28,8 +28,8 @@
   "paths": {
     "/api/v1/lords": {
       "get": {
-        "summary": "List registered lords",
-        "description": "Public list of lords with capacity/reputation/health.",
+        "summary": "List lords (NUMA cores view)",
+        "description": "Полный дамп для admin/monitoring.",
         "operationId": "SchedulerService_ListLords",
         "responses": {
           "200": {
@@ -48,21 +48,19 @@
         "parameters": [
           {
             "name": "onlyHealthy",
-            "description": "default true",
             "in": "query",
             "required": false,
             "type": "boolean"
           }
         ],
         "tags": [
-          "tenant"
+          "admin"
         ]
       }
     },
     "/api/v1/lords/register": {
       "post": {
         "summary": "Lord registration",
-        "description": "Lord registers itself with scheduler on startup.",
         "operationId": "LordService_Register",
         "responses": {
           "200": {
@@ -95,8 +93,7 @@
     },
     "/api/v1/lords/{lordId}/heartbeat": {
       "post": {
-        "summary": "Lord heartbeat (unary in MVP)",
-        "description": "Keepalive + current load. Phase 3+ -\u003e bidi stream.",
+        "summary": "Lord heartbeat",
         "operationId": "LordService_Heartbeat",
         "responses": {
           "200": {
@@ -136,7 +133,6 @@
     "/api/v1/lords/{lordId}/lazy-death": {
       "post": {
         "summary": "Acknowledge lazy death",
-        "description": "Lord announces planned shutdown. Scheduler drains it gracefully.",
         "operationId": "LordService_AcknowledgeLazyDeath",
         "responses": {
           "200": {
@@ -173,16 +169,16 @@
         ]
       }
     },
-    "/api/v1/tasks": {
+    "/api/v1/processes": {
       "get": {
-        "summary": "List tenant tasks",
-        "description": "Paginated tenant task list, newest first.",
-        "operationId": "SchedulerService_ListTasks",
+        "summary": "List tenant processes",
+        "description": "Глобальный view: процессы тенанта со всех lord'ов. Newest first.",
+        "operationId": "SchedulerService_ListProcesses",
         "responses": {
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1ListTasksResponse"
+              "$ref": "#/definitions/v1ListProcessesResponse"
             }
           },
           "default": {
@@ -195,14 +191,19 @@
         "parameters": [
           {
             "name": "tenantId",
-            "description": "фильтр по тенанту; пустой = все (для admin)",
             "in": "query",
             "required": false,
             "type": "string"
           },
           {
+            "name": "onlyRunning",
+            "description": "фильтр: только RUNNING/PAUSED",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
             "name": "limit",
-            "description": "default 50, max 500",
             "in": "query",
             "required": false,
             "type": "integer",
@@ -210,7 +211,6 @@
           },
           {
             "name": "pageToken",
-            "description": "opaque cursor для пагинации",
             "in": "query",
             "required": false,
             "type": "string"
@@ -221,14 +221,14 @@
         ]
       },
       "post": {
-        "summary": "Submit a new task",
-        "description": "Tenant submits a task for execution. Returns task_id.",
-        "operationId": "SchedulerService_SubmitTask",
+        "summary": "Spawn a new process",
+        "description": "Создать процесс в SSI. Placement решает scheduler.",
+        "operationId": "SchedulerService_Spawn",
         "responses": {
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1SubmitTaskResponse"
+              "$ref": "#/definitions/v1ProcessInfo"
             }
           },
           "default": {
@@ -244,7 +244,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/v1SubmitTaskRequest"
+              "$ref": "#/definitions/v1SpawnRequest"
             }
           }
         ],
@@ -253,16 +253,16 @@
         ]
       }
     },
-    "/api/v1/tasks/{taskId}": {
+    "/api/v1/processes/{processId}": {
       "get": {
-        "summary": "Get task status",
-        "description": "Returns current task status. Idempotent.",
-        "operationId": "SchedulerService_GetTask",
+        "summary": "Get process state",
+        "description": "Снимок состояния. Idempotent.",
+        "operationId": "SchedulerService_GetProcess",
         "responses": {
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1Task"
+              "$ref": "#/definitions/v1ProcessInfo"
             }
           },
           "default": {
@@ -274,7 +274,7 @@
         },
         "parameters": [
           {
-            "name": "taskId",
+            "name": "processId",
             "in": "path",
             "required": true,
             "type": "string"
@@ -285,16 +285,16 @@
         ]
       }
     },
-    "/api/v1/tasks/{taskId}/cancel": {
+    "/api/v1/processes/{processId}/files": {
       "post": {
-        "summary": "Cancel a running task",
-        "description": "Best-effort cancellation. No guarantee of immediate effect.",
-        "operationId": "SchedulerService_CancelTask",
+        "summary": "Push file to lord",
+        "description": "Локальный копи: scheduler координирует передачу файла от тенанта к lord'у.",
+        "operationId": "SchedulerService_PushFile",
         "responses": {
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1CancelTaskResponse"
+              "$ref": "#/definitions/v1PushFileResponse"
             }
           },
           "default": {
@@ -306,7 +306,7 @@
         },
         "parameters": [
           {
-            "name": "taskId",
+            "name": "processId",
             "in": "path",
             "required": true,
             "type": "string"
@@ -316,7 +316,7 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/SchedulerServiceCancelTaskBody"
+              "$ref": "#/definitions/SchedulerServicePushFileBody"
             }
           }
         ],
@@ -325,16 +325,16 @@
         ]
       }
     },
-    "/api/v1/tasks/{taskId}/control": {
+    "/api/v1/processes/{processId}/kill": {
       "post": {
-        "summary": "Control task lifecycle (pause/resume/restart/relocate/cancel)",
-        "description": "Operator-level control over running task. Cascades to fan-out children.",
-        "operationId": "SchedulerService_ControlTask",
+        "summary": "Send signal to process (default SIGTERM)",
+        "description": "POSIX-семантика через scheduler. SIGKILL если force=true.",
+        "operationId": "SchedulerService_Kill",
         "responses": {
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1ControlTaskResponse"
+              "$ref": "#/definitions/v1KillResponse"
             }
           },
           "default": {
@@ -346,7 +346,7 @@
         },
         "parameters": [
           {
-            "name": "taskId",
+            "name": "processId",
             "in": "path",
             "required": true,
             "type": "string"
@@ -356,7 +356,87 @@
             "in": "body",
             "required": true,
             "schema": {
-              "$ref": "#/definitions/SchedulerServiceControlTaskBody"
+              "$ref": "#/definitions/SchedulerServiceKillBody"
+            }
+          }
+        ],
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/v1/processes/{processId}/migrate": {
+      "post": {
+        "summary": "Migrate process to another lord",
+        "description": "CRIU checkpoint + restore. Активно во время MIGRATING.",
+        "operationId": "SchedulerService_Migrate",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1MigrateResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "processId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SchedulerServiceMigrateBody"
+            }
+          }
+        ],
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
+    "/api/v1/processes/{processId}/wait": {
+      "post": {
+        "summary": "Wait for process exit",
+        "description": "Блокирует до exit/stop или timeout.",
+        "operationId": "SchedulerService_Wait",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ProcessInfo"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "processId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SchedulerServiceWaitBody"
             }
           }
         ],
@@ -367,10 +447,11 @@
     }
   },
   "definitions": {
-    "LogChunkStream": {
+    "IOChunkStream": {
       "type": "string",
       "enum": [
         "STREAM_UNSPECIFIED",
+        "STREAM_STDIN",
         "STREAM_STDOUT",
         "STREAM_STDERR"
       ],
@@ -381,53 +462,95 @@
       "properties": {
         "gracePeriodSec": {
           "type": "integer",
-          "format": "int32",
-          "title": "за сколько секунд лорд хочет завершиться"
+          "format": "int32"
         }
       }
     },
     "LordServiceHeartbeatBody": {
       "type": "object",
       "properties": {
-        "currentCpuPct": {
+        "cpuUsedPct": {
           "type": "integer",
           "format": "int32",
-          "title": "текущая утилизация, 0..100"
+          "description": "Текущая утилизация (не cumulative — snapshot)."
         },
-        "currentMemMb": {
-          "type": "integer",
-          "format": "int32",
-          "title": "текущее потребление RAM"
+        "memUsedBytes": {
+          "type": "string",
+          "format": "int64"
         },
-        "activeTasks": {
+        "activeProcesses": {
           "type": "integer",
-          "format": "int32",
-          "title": "сколько задач сейчас выполняется"
+          "format": "int32"
         }
       }
     },
-    "SchedulerServiceCancelTaskBody": {
-      "type": "object",
-      "properties": {
-        "force": {
-          "type": "boolean",
-          "title": "true = SIGKILL, false (default) = SIGTERM + grace period"
-        }
-      }
+    "ProcessEventEventType": {
+      "type": "string",
+      "enum": [
+        "EVENT_TYPE_UNSPECIFIED",
+        "EVENT_TYPE_STATE_CHANGED",
+        "EVENT_TYPE_SIGNAL_RECEIVED",
+        "EVENT_TYPE_CHILD_SPAWNED",
+        "EVENT_TYPE_IO_THRESHOLD",
+        "EVENT_TYPE_MIGRATION_COMPLETE"
+      ],
+      "default": "EVENT_TYPE_UNSPECIFIED",
+      "title": "- EVENT_TYPE_IO_THRESHOLD: crossed CPU/MEM threshold"
     },
-    "SchedulerServiceControlTaskBody": {
+    "SchedulerServiceKillBody": {
       "type": "object",
       "properties": {
-        "action": {
-          "$ref": "#/definitions/v1ControlAction"
+        "signalNumber": {
+          "type": "integer",
+          "format": "int32",
+          "title": "default 15 (SIGTERM)"
         },
         "force": {
           "type": "boolean",
-          "title": "для CANCEL: true=SIGKILL, false=SIGTERM+grace"
+          "title": "true → SIGKILL, bypass grace"
+        }
+      }
+    },
+    "SchedulerServiceMigrateBody": {
+      "type": "object",
+      "properties": {
+        "targetLordId": {
+          "type": "string",
+          "description": "Если target_lord_id пустой И auto=true — scheduler выберет лучший."
+        },
+        "auto": {
+          "type": "boolean"
         },
         "reason": {
           "type": "string",
-          "title": "human-readable, логируется в audit"
+          "title": "human-readable, логируется"
+        }
+      }
+    },
+    "SchedulerServicePushFileBody": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string",
+          "format": "byte"
+        },
+        "mode": {
+          "type": "integer",
+          "format": "int64",
+          "title": "unix permissions"
+        }
+      }
+    },
+    "SchedulerServiceWaitBody": {
+      "type": "object",
+      "properties": {
+        "timeoutSec": {
+          "type": "integer",
+          "format": "int32",
+          "title": "0 = ждать бесконечно, max 600"
         }
       }
     },
@@ -467,64 +590,46 @@
         },
         "drainTimeoutSec": {
           "type": "integer",
-          "format": "int32",
-          "title": "сколько ждать до принудительного выведения"
+          "format": "int32"
         }
       }
     },
-    "v1CancelTaskResponse": {
+    "v1CheckpointResponse": {
       "type": "object",
       "properties": {
-        "acknowledged": {
-          "type": "boolean",
-          "title": "scheduler принял запрос"
-        },
-        "currentStatus": {
-          "$ref": "#/definitions/v1TaskStatus"
-        }
-      }
-    },
-    "v1ContainerStarted": {
-      "type": "object",
-      "properties": {
-        "containerId": {
-          "type": "string",
-          "title": "containerd container ID"
-        },
-        "at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "v1ControlAction": {
-      "type": "string",
-      "enum": [
-        "CONTROL_ACTION_UNSPECIFIED",
-        "CONTROL_ACTION_PAUSE",
-        "CONTROL_ACTION_RESUME",
-        "CONTROL_ACTION_RESTART",
-        "CONTROL_ACTION_RELOCATE",
-        "CONTROL_ACTION_CANCEL"
-      ],
-      "default": "CONTROL_ACTION_UNSPECIFIED",
-      "description": "Control action для ControlTask.\n\n - CONTROL_ACTION_PAUSE: freeze cgroup, SIGSTOP\n - CONTROL_ACTION_RESUME: thaw cgroup, SIGCONT\n - CONTROL_ACTION_RESTART: kill + rerun (same task_id, fresh container)\n - CONTROL_ACTION_RELOCATE: stop + requeue на другом лорде (placement заново)\n - CONTROL_ACTION_CANCEL: алиас CancelTask для единого API"
-    },
-    "v1ControlTaskResponse": {
-      "type": "object",
-      "properties": {
-        "acknowledged": {
+        "ok": {
           "type": "boolean"
         },
-        "currentStatus": {
-          "$ref": "#/definitions/v1TaskStatus"
+        "checkpointPath": {
+          "type": "string",
+          "title": "путь к dump'у на lord'е"
         },
-        "affectedTaskIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "title": "при fan-out: parent + children"
+        "sizeBytes": {
+          "type": "string",
+          "format": "int64"
+        }
+      }
+    },
+    "v1FilePullResponse": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "format": "byte"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      }
+    },
+    "v1FilePushResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "sha256": {
+          "type": "string"
         }
       }
     },
@@ -536,12 +641,63 @@
         },
         "nextHeartbeatSec": {
           "type": "integer",
-          "format": "int32",
-          "title": "hint от scheduler'а"
+          "format": "int32"
         },
         "drain": {
           "type": "boolean",
-          "title": "true → лорд должен начать lazy death"
+          "title": "true → начать lazy death"
+        },
+        "pendingCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Pending commands от scheduler'а (например \"drain this\", \"reload config\")."
+        }
+      }
+    },
+    "v1IOChunk": {
+      "type": "object",
+      "properties": {
+        "stream": {
+          "$ref": "#/definitions/IOChunkStream"
+        },
+        "data": {
+          "type": "string",
+          "format": "byte"
+        },
+        "offset": {
+          "type": "string",
+          "format": "int64",
+          "title": "byte offset от начала (для ordering и resume)"
+        }
+      },
+      "description": "IO chunk — для stdin/stdout/stderr стримов."
+    },
+    "v1InvalidateFileCacheResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1KillRemoteResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1KillResponse": {
+      "type": "object",
+      "properties": {
+        "acknowledged": {
+          "type": "boolean"
+        },
+        "currentState": {
+          "$ref": "#/definitions/v1ProcessState"
         }
       }
     },
@@ -557,36 +713,18 @@
         }
       }
     },
-    "v1ListTasksResponse": {
+    "v1ListProcessesResponse": {
       "type": "object",
       "properties": {
-        "tasks": {
+        "processes": {
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/v1Task"
+            "$ref": "#/definitions/v1ProcessInfo"
           }
         },
         "nextPageToken": {
           "type": "string"
-        }
-      }
-    },
-    "v1LogChunk": {
-      "type": "object",
-      "properties": {
-        "stream": {
-          "$ref": "#/definitions/LogChunkStream"
-        },
-        "data": {
-          "type": "string",
-          "format": "byte",
-          "title": "raw bytes, UTF-8 assumed"
-        },
-        "offset": {
-          "type": "string",
-          "format": "int64",
-          "title": "byte offset от начала (для ordering и resume)"
         }
       }
     },
@@ -595,47 +733,8 @@
       "properties": {
         "lordId": {
           "type": "string",
-          "title": "уникальный ID, стабильный между рестартами"
+          "title": "ULID"
         },
-        "hostname": {
-          "type": "string",
-          "title": "os.Hostname() — для отладки и \"wow\" момента"
-        },
-        "capacity": {
-          "$ref": "#/definitions/v1ResourceSpec",
-          "title": "задекларированные возможности"
-        },
-        "healthy": {
-          "type": "boolean",
-          "title": "последний heartbeat был свежим"
-        },
-        "reputation": {
-          "type": "number",
-          "format": "double",
-          "title": "0.0..1.0, computed scheduler'ом"
-        },
-        "lastSeen": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "description": "Информация о лорде (публичная часть, без секретов)."
-    },
-    "v1PullStarted": {
-      "type": "object",
-      "properties": {
-        "image": {
-          "type": "string"
-        },
-        "at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "v1RegisterRequest": {
-      "type": "object",
-      "properties": {
         "hostname": {
           "type": "string"
         },
@@ -647,22 +746,261 @@
           "type": "string",
           "title": "\"amd64\""
         },
-        "cpuTotal": {
+        "cpuCoresPhysical": {
           "type": "integer",
           "format": "int32",
-          "title": "cores"
+          "description": "Реальные физические ресурсы lord'а (то что есть на машине)."
         },
-        "memTotalMb": {
+        "memTotalBytesPhysical": {
+          "type": "string",
+          "format": "int64"
+        },
+        "cpuUsedPct": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Текущая утилизация."
+        },
+        "memUsedBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "activeProcesses": {
           "type": "integer",
           "format": "int32"
         },
-        "defaultCapacity": {
-          "$ref": "#/definitions/v1ResourceSpec",
-          "title": "что лорд готов выделять по умолчанию"
+        "healthy": {
+          "type": "boolean",
+          "title": "Health"
+        },
+        "reputation": {
+          "type": "number",
+          "format": "double",
+          "title": "0.0..1.0"
+        },
+        "lastSeen": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "criuAvailable": {
+          "type": "boolean",
+          "description": "Поддержка CRIU для миграции."
+        }
+      },
+      "description": "Информация о лорде — \"ядре\" в NUMA-аналогии."
+    },
+    "v1MigrateResponse": {
+      "type": "object",
+      "properties": {
+        "acknowledged": {
+          "type": "boolean"
+        },
+        "currentState": {
+          "$ref": "#/definitions/v1ProcessState",
+          "title": "будет MIGRATING потом RUNNING на новом lord'е"
+        },
+        "newLordId": {
+          "type": "string"
+        },
+        "newLocalPid": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "v1ProcessEvent": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/v1ProcessRef"
+        },
+        "type": {
+          "$ref": "#/definitions/ProcessEventEventType"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "newState": {
+          "$ref": "#/definitions/v1ProcessState"
+        },
+        "signalNumber": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "childRef": {
+          "$ref": "#/definitions/v1ProcessRef"
+        },
+        "usage": {
+          "$ref": "#/definitions/v1ResourceUsage"
+        }
+      },
+      "description": "Событие процесса для WatchProcess stream."
+    },
+    "v1ProcessInfo": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/v1ProcessRef"
+        },
+        "tenantId": {
+          "type": "string",
+          "title": "кто владелец (тенант/арендатор)"
+        },
+        "parentRef": {
+          "type": "string",
+          "title": "process_id родителя, \"\" если init этого тенанта"
+        },
+        "execPath": {
+          "type": "string",
+          "description": "бинарник",
+          "title": "exec"
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "аргументы"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "state": {
+          "$ref": "#/definitions/v1ProcessState",
+          "title": "current state"
+        },
+        "stateChangedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cpuUsageUsecTotal": {
+          "type": "string",
+          "format": "int64",
+          "title": "resource usage за всё время"
+        },
+        "memCurrentBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "memPeakBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "numThreads": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "exitedAt": {
+          "type": "string",
+          "format": "date-time",
+          "title": "exit info (если state in {EXITED, STOPPED})"
+        },
+        "exitCode": {
+          "type": "integer",
+          "format": "int32",
+          "title": "-1 если killed by signal"
+        },
+        "exitSignal": {
+          "type": "integer",
+          "format": "int32",
+          "title": "0 если normal exit"
+        }
+      },
+      "description": "Snapshot процесса — выдаётся через GetProcess/ListProcesses."
+    },
+    "v1ProcessRef": {
+      "type": "object",
+      "properties": {
+        "processId": {
+          "type": "string",
+          "title": "глобальный стабильный ID (ULID)"
+        },
+        "lordId": {
+          "type": "string",
+          "title": "текущий lord, \"\" если не RUNNING"
+        },
+        "localPid": {
+          "type": "integer",
+          "format": "int32",
+          "title": "PID внутри lord'а, 0 если не RUNNING"
+        }
+      },
+      "description": "Идентификация процесса в SSI.\n\nГлобально процесс адресуется через (lord_id, local_pid) ИЛИ\nчерез process_id (ULID), если мигрировал между lord'ами —\nprocess_id остаётся стабильным, local_pid меняется."
+    },
+    "v1ProcessState": {
+      "type": "string",
+      "enum": [
+        "PROCESS_STATE_UNSPECIFIED",
+        "PROCESS_STATE_NEW",
+        "PROCESS_STATE_READY",
+        "PROCESS_STATE_RUNNING",
+        "PROCESS_STATE_PAUSED",
+        "PROCESS_STATE_MIGRATING",
+        "PROCESS_STATE_EXITED",
+        "PROCESS_STATE_STOPPED"
+      ],
+      "default": "PROCESS_STATE_UNSPECIFIED",
+      "description": "Состояние процесса (POSIX-подобная FSM, не OCI task FSM).\n\nПолная диаграмма:\n  NEW ──► READY ──► RUNNING ──► EXITED\n               │         │\n               │         ├──► PAUSED ──► RUNNING\n               │         │\n               │         ├──► MIGRATING ──► RUNNING (на другом lord'е)\n               │         │\n               │         └──► STOPPED (killed by signal)\n\nREADY = создан и стоит в очереди планировщика на запуск\nRUNNING = исполняется на каком-то lord'е\nPAUSED = freeze (cgroup.freeze=1, SIGSTOP)\nMIGRATING = в процессе переезда на другой lord (CRIU dump/restore)\nEXITED = завершился нормально (exit_code != null)\nSTOPPED = убит сигналом\n\n - PROCESS_STATE_NEW: создан в scheduler'е, ещё не запущен\n - PROCESS_STATE_READY: ожидает placement / запуска\n - PROCESS_STATE_RUNNING: исполняется\n - PROCESS_STATE_PAUSED: заморожен (SIGSTOP + cgroup.freeze)\n - PROCESS_STATE_MIGRATING: в процессе миграции (CRIU)\n - PROCESS_STATE_EXITED: завершился нормально\n - PROCESS_STATE_STOPPED: убит сигналом"
+    },
+    "v1PullFileResponse": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "format": "byte"
+        },
+        "sha256": {
+          "type": "string",
+          "title": "для integrity check"
+        }
+      }
+    },
+    "v1PushFileResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "sha256": {
+          "type": "string",
+          "title": "то что реально записалось"
+        }
+      }
+    },
+    "v1RegisterRequest": {
+      "type": "object",
+      "properties": {
+        "hostname": {
+          "type": "string"
+        },
+        "os": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string"
+        },
+        "cpuCoresPhysical": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "memTotalBytesPhysical": {
+          "type": "string",
+          "format": "int64"
+        },
+        "criuAvailable": {
+          "type": "boolean",
+          "title": "поддерживает ли CRIU"
+        },
+        "criuVersion": {
+          "type": "string",
+          "title": "для информации"
         },
         "authToken": {
           "type": "string",
-          "title": "pre-shared, пока в plaintext в metadata (Phase 0)"
+          "title": "pre-shared token"
         }
       }
     },
@@ -671,302 +1009,130 @@
       "properties": {
         "lordId": {
           "type": "string",
-          "title": "присвоенный scheduler'ом ID (ULID)"
+          "title": "ULID, присвоенный scheduler'ом"
         },
         "heartbeatIntervalSec": {
           "type": "integer",
           "format": "int32",
-          "title": "рекомендуемый интервал (default 10)"
+          "title": "рекомендуемый интервал"
+        },
+        "etroniumSharedSecret": {
+          "type": "string",
+          "title": "shared key для auth между lord и scheduler"
         }
       }
     },
     "v1ResourceSpec": {
       "type": "object",
       "properties": {
+        "cpuShares": {
+          "type": "integer",
+          "format": "int32",
+          "title": "относительный вес (cgroup cpu.weight), default 100"
+        },
         "cpuQuotaPct": {
           "type": "integer",
           "format": "int32",
-          "title": "1..100, default 50"
+          "title": "жёсткий лимит в % от ядра, 0 = без лимита (только weight)"
         },
-        "memLimitMb": {
+        "memLimitBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "жёсткий лимит RAM, 0 = без лимита"
+        },
+        "ioWeight": {
           "type": "integer",
           "format": "int32",
-          "title": "\u003e 0, default 256"
+          "title": "blkio weight, default 100"
         },
-        "timeoutSec": {
+        "pidsLimit": {
           "type": "integer",
           "format": "int32",
-          "title": "\u003e 0, default 30, max 600"
+          "title": "max кол-во процессов/тредов"
         }
       },
-      "title": "Запрашиваемые ресурсы для контейнера. Маппится в cgroups v2:\n  cpu.max        = quota + period (period обычно 100000)\n  memory.max     = mem_limit_mb * 1024 * 1024"
+      "description": "local_capacity  — физически на lord'е, реальный лимит cgroup\n  advertised_capacity — что scheduler показывает тенанту, может\n                         быть больше чем физическое (NUMA-overcommit)\n\nПринцип: lord видит только local_capacity, scheduler знает обе.\nКогда процесс упирается в local_capacity — scheduler мигрирует\nили сжимает с других tenant'ов на этом lord'е.",
+      "title": "Ресурсы процесса. Два уровня:"
     },
-    "v1SubmitTaskRequest": {
+    "v1ResourceUsage": {
+      "type": "object",
+      "properties": {
+        "cpuUsageUsecDelta": {
+          "type": "string",
+          "format": "int64"
+        },
+        "memCurrentBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "memPeakBytes": {
+          "type": "string",
+          "format": "int64"
+        },
+        "numThreads": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "v1RestoreResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "localPid": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    },
+    "v1SpawnRequest": {
       "type": "object",
       "properties": {
         "tenantId": {
           "type": "string",
-          "title": "пока pre-shared per CLI install; auth — Phase 2+"
+          "title": "пока pre-shared per CLI; auth в metadata"
         },
-        "image": {
+        "execPath": {
           "type": "string",
-          "title": "OCI reference, e.g. \"alpine\", \"alpine:3.20\", \"ghcr.io/midaswr/myimage:tag\""
+          "title": "абсолютный путь внутри lord'а (например \"/usr/bin/python3\")"
         },
-        "command": {
+        "argv": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "title": "argv-style: [\"sh\", \"-c\", \"echo hi\"]"
-        },
-        "resources": {
-          "$ref": "#/definitions/v1ResourceSpec",
-          "title": "optional, defaults из конфига scheduler'а"
+          "title": "[\"python3\", \"-c\", \"print('hi')\"]"
         },
         "env": {
           "type": "object",
           "additionalProperties": {
             "type": "string"
-          },
-          "title": "env vars для контейнера (Phase 1+)"
-        },
-        "labels": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
-          "title": "произвольные метаданные тенанта"
-        },
-        "volumes": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "$ref": "#/definitions/v1VolumeMount"
-          },
-          "title": "см. VolumeMount; статика/DFS/tmpfs"
-        },
-        "targetLordCount": {
-          "type": "integer",
-          "format": "int32",
-          "title": "fan-out: 1 = один лорд, N = параллельно N лордов (ответ на OpenQ #1)"
-        }
-      }
-    },
-    "v1SubmitTaskResponse": {
-      "type": "object",
-      "properties": {
-        "taskId": {
-          "type": "string",
-          "title": "ULID, sortable; parent task_id если target_lord_count \u003e 1"
-        },
-        "initialStatus": {
-          "$ref": "#/definitions/v1TaskStatus",
-          "title": "обычно QUEUED"
-        },
-        "childTaskIds": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "title": "populated если был fan-out (parent → N children)"
-        }
-      }
-    },
-    "v1Task": {
-      "type": "object",
-      "properties": {
-        "taskId": {
-          "type": "string"
-        },
-        "tenantId": {
-          "type": "string"
-        },
-        "image": {
-          "type": "string"
-        },
-        "command": {
-          "type": "array",
-          "items": {
-            "type": "string"
           }
         },
         "resources": {
-          "$ref": "#/definitions/v1ResourceSpec"
+          "$ref": "#/definitions/v1ResourceSpec",
+          "title": "см. ResourceSpec"
         },
-        "status": {
-          "$ref": "#/definitions/v1TaskStatus"
-        },
-        "landlordId": {
+        "workingDir": {
           "type": "string",
-          "title": "ID лорда, который исполняет (set после placement)"
+          "title": "cwd внутри lord'а, default \"/\""
         },
-        "result": {
-          "$ref": "#/definitions/v1TaskResult",
-          "title": "populated когда status in (COMPLETED, FAILED, CANCELED)"
-        },
-        "createdAt": {
+        "preferLordId": {
           "type": "string",
-          "format": "date-time"
+          "description": "Опциональные hints для placement. Если пусто — scheduler сам.\n\nsoft-affinity"
         },
-        "startedAt": {
+        "criuCheckpointable": {
+          "type": "boolean",
+          "title": "подсказка lord'у что процесс готов к миграции"
+        },
+        "stdinInitial": {
           "type": "string",
-          "format": "date-time"
-        },
-        "finishedAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "labels": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "format": "byte",
+          "description": "Initial stdin (если есть что-то ввести сразу при старте)."
         }
       }
-    },
-    "v1TaskEvent": {
-      "type": "object",
-      "properties": {
-        "statusChanged": {
-          "$ref": "#/definitions/v1TaskStatus",
-          "title": "новый статус"
-        },
-        "logChunk": {
-          "$ref": "#/definitions/v1LogChunk",
-          "title": "stdout/stderr"
-        },
-        "finalResult": {
-          "$ref": "#/definitions/v1TaskResult",
-          "title": "отправляется один раз перед закрытием стрима"
-        },
-        "at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "description": "TaskEvent — то что шлётся в StreamTask (для тенанта).\n\nОбъединяет status changes + log chunks + result в один поток."
-    },
-    "v1TaskResult": {
-      "type": "object",
-      "properties": {
-        "exitCode": {
-          "type": "integer",
-          "format": "int32"
-        },
-        "stdout": {
-          "type": "string",
-          "title": "полный stdout (или truncated — см. flags)"
-        },
-        "stderr": {
-          "type": "string"
-        },
-        "durationMs": {
-          "type": "string",
-          "format": "int64"
-        },
-        "cpuUsageUsec": {
-          "type": "string",
-          "format": "int64",
-          "title": "из cpu.stat cgroup"
-        },
-        "memPeakBytes": {
-          "type": "string",
-          "format": "int64",
-          "title": "пиковое потребление памяти"
-        },
-        "error": {
-          "type": "string",
-          "title": "human-readable если FAILED"
-        }
-      },
-      "description": "Финальный результат задачи."
-    },
-    "v1TaskStatus": {
-      "type": "string",
-      "enum": [
-        "TASK_STATUS_UNSPECIFIED",
-        "TASK_STATUS_QUEUED",
-        "TASK_STATUS_SCHEDULED",
-        "TASK_STATUS_PULLING",
-        "TASK_STATUS_RUNNING",
-        "TASK_STATUS_COMPLETED",
-        "TASK_STATUS_FAILED",
-        "TASK_STATUS_CANCELED"
-      ],
-      "default": "TASK_STATUS_UNSPECIFIED",
-      "description": "- TASK_STATUS_UNSPECIFIED: sentinel — никогда не должен появляться в API\n - TASK_STATUS_QUEUED: принята scheduler'ом, ждёт placement\n - TASK_STATUS_SCHEDULED: placement выбрал лорда, задача отправляется\n - TASK_STATUS_PULLING: lord забрал задачу (в случае pull-модели)\n - TASK_STATUS_RUNNING: контейнер стартовал\n - TASK_STATUS_COMPLETED: exit code = 0\n - TASK_STATUS_FAILED: exit code != 0 или runtime error\n - TASK_STATUS_CANCELED: tenant/lord отменил до завершения",
-      "title": "Task lifecycle states.\nFSM: QUEUED → SCHEDULED → PULLING → RUNNING → (COMPLETED | FAILED | CANCELED)"
-    },
-    "v1TaskUpdate": {
-      "type": "object",
-      "properties": {
-        "taskId": {
-          "type": "string"
-        },
-        "status": {
-          "$ref": "#/definitions/v1TaskStatus",
-          "title": "новый статус"
-        },
-        "at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "logChunk": {
-          "$ref": "#/definitions/v1LogChunk",
-          "title": "chunk stdout/stderr во время RUNNING"
-        },
-        "result": {
-          "$ref": "#/definitions/v1TaskResult",
-          "title": "финальный, при COMPLETED/FAILED/CANCELED"
-        },
-        "pullStarted": {
-          "$ref": "#/definitions/v1PullStarted",
-          "title": "лорд начал pull образа"
-        },
-        "containerStarted": {
-          "$ref": "#/definitions/v1ContainerStarted",
-          "title": "containerd создал контейнер"
-        }
-      },
-      "description": "TaskUpdate — то что лорд шлёт scheduler'у в RunTask stream.\n\nЭволюция статусов внутри одной задачи:\n  QUEUED → SCHEDULED → PULLING → RUNNING → COMPLETED|FAILED|CANCELED"
-    },
-    "v1VolumeMount": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "title": "имя внутри контейнера, должно быть валидным как том containerd"
-        },
-        "type": {
-          "$ref": "#/definitions/v1VolumeType"
-        },
-        "source": {
-          "type": "string",
-          "title": "см. формат выше; для TMPFS — size, напр. \"100mb\""
-        },
-        "mountPath": {
-          "type": "string",
-          "title": "абсолютный путь в контейнере"
-        },
-        "readOnly": {
-          "type": "boolean"
-        },
-        "dfsKeyId": {
-          "type": "string",
-          "title": "опционально, какой pre-shared ключ использовать (DFS only)"
-        }
-      }
-    },
-    "v1VolumeType": {
-      "type": "string",
-      "enum": [
-        "VOLUME_TYPE_UNSPECIFIED",
-        "VOLUME_TYPE_STATIC",
-        "VOLUME_TYPE_DFS",
-        "VOLUME_TYPE_TMPFS"
-      ],
-      "default": "VOLUME_TYPE_UNSPECIFIED",
-      "title": "- VOLUME_TYPE_STATIC: чтение со scheduler'а (read-only по умолчанию)\n - VOLUME_TYPE_DFS: чтение/запись из защищённой DFS (auth на lord'е)\n - VOLUME_TYPE_TMPFS: RAM-backed, ephemeral"
     }
   }
 }

@@ -1,94 +1,119 @@
 # gRPC API — Etronium-Scdr
 
-> Контракт API. Сгенерирован из `proto/etronium/v1/etronium.proto`.
+> Контракт v2 (POSIX-подобный process API). Сгенерирован из `proto/etronium/v1/etronium.proto`.
 
-## Как читать
+## Два сервиса
 
-- **`SchedulerService`** — клиентский API (для tenant CLI `etronium`).
-  Тенант НЕ ходит к лордам напрямую — всё через scheduler.
-- **`LordService`** — серверный API (для доноров-lord'ов).
-  Лорды регистрируются, шлют heartbeat, принимают задачи от scheduler'а.
-- **Common типы** — `ResourceSpec`, `Task`, `TaskStatus`, `Lord`, `TaskResult`.
+- **`SchedulerService`** — то что вызывает tenant (арендатор).
+  - Видит глобально: процессы тенанта на всех lord'ах где они сейчас живут.
+  - Вызывает Spawn/Kill/Wait/Migrate, не знает на каком lord'е процесс.
+- **`LordService`** — то что scheduler вызывает на lord'е.
+  - Lord видит локально: только свои процессы.
+  - Принимает ExecRemote/KillRemote/StatsRemote/Checkpoint/Restore от scheduler'а.
 
-## Потоковая модель
+## RPC SchedulerService (tenant API)
 
-| RPC | Тип | Кто инициирует | Когда реализуется |
-|---|---|---|---|
-| `SubmitTask` | unary | tenant → scheduler | Phase 0 |
-| `GetTask` | unary | tenant → scheduler | Phase 0 |
-| `ListTasks` | unary | tenant → scheduler | Phase 0 |
-| `CancelTask` | unary | tenant → scheduler | Phase 0 |
-| `ControlTask` | unary | tenant/scheduler | Phase 1 (для cascade на fan-out) |
-| `ListLords` | unary | tenant → scheduler | Phase 0 |
-| `StreamTask` | server stream | tenant → scheduler | Phase 2 |
-| `Register` | unary | lord → scheduler | Phase 0 |
-| `Heartbeat` | unary (MVP) / bidi (Phase 3+) | lord → scheduler | Phase 0 (unary) |
-| `RunTask` | server stream | scheduler → lord | Phase 0 (упрощённый), Phase 1 (полный) |
-| `AcknowledgeLazyDeath` | unary | lord → scheduler | Phase 4 |
+| RPC | Тип | Назначение |
+|---|---|---|
+| `Spawn` | unary | Создать процесс |
+| `Kill` | unary | Послать сигнал (default SIGTERM) |
+| `Wait` | unary | Блокирующее ожидание exit |
+| `GetProcess` | unary | Снимок состояния |
+| `ListProcesses` | unary | Список процессов тенанта (все lord'ы) |
+| `Migrate` | unary | Переместить процесс на другой lord (CRIU) |
+| `ListLords` | unary | Дамп всех lord'ов (admin) |
+| `StreamProcessIO` | server stream | stdin/stdout/stderr живого процесса |
+| `WatchProcess` | server stream | Подписка на lifecycle events |
+| `PullFile` | unary | Забрать файл с lord'а |
+| `PushFile` | unary | Положить файл на lord'а |
+| `InvalidateFileCache` | unary | Сбросить локальную копию |
 
-## Fan-out (1 tenant → N lords)
+## RPC LordService (scheduler → lord)
 
-`SubmitTaskRequest.target_lord_count = N` (N > 1) → scheduler создаёт:
-- parent task (status = RUNNING когда все children завершились)
-- N child tasks, по одному на лорда (status = свой жизненный цикл)
+| RPC | Тип | Назначение |
+|---|---|---|
+| `Register` | unary | Регистрация lord'а |
+| `Heartbeat` | unary | Keepalive + метрики |
+| `ExecRemote` | server stream | Запустить процесс (stream IO до завершения) |
+| `KillRemote` | unary | Послать сигнал процессу |
+| `StatsRemote` | unary | Текущие метрики lord'а |
+| `FilePull` | unary | Забрать файл |
+| `FilePush` | unary | Положить файл |
+| `Checkpoint` | unary | CRIU dump |
+| `Restore` | unary | CRIU restore |
+| `AcknowledgeLazyDeath` | unary | Объявить о завершении |
 
-`RunTaskRequest` у каждого child содержит `parent_task_id` и `fanout_index` (0..N-1).
-`ControlTask` на parent cascade'ом применяется ко всем children (`ControlTaskResponse.affected_task_ids`).
+## Process lifecycle (FSM)
 
-## Volume mounts
+```
+NEW ──► READY ──► RUNNING ──► EXITED
+                │         │
+                │         ├──► PAUSED ──► RUNNING
+                │         │
+                │         ├──► MIGRATING ──► RUNNING (на другом lord'е)
+                │         │
+                │         └──► STOPPED (killed by signal)
+```
 
-Три типа (`VolumeType`):
-- `STATIC` — статика со scheduler'а, read-only. `source: "static://path"`.
-- `DFS` — защищённое хранилище с pre-shared ключом. `source: "dfs://bucket/key"`, опционально `dfs_key_id`.
-- `TMPFS` — RAM-backed. `source: "tmpfs://100mb"`.
+- **NEW** — создан в process_table, ещё не placement'нут
+- **READY** — placement выбран, ExecRemote отправлен
+- **RUNNING** — бежит на lord'е
+- **PAUSED** — cgroup.freeze=1 + SIGSTOP
+- **MIGRATING** — CRIU dump + restore в процессе
+- **EXITED** — завершился нормально
+- **STOPPED** — убит сигналом
 
-Монтируются при создании контейнера; hot-mount — Phase 5+.
+## Resource model
 
-## OpenAPI / Swagger
+`ResourceSpec`:
+- `cpu_shares` — относительный вес (cgroup cpu.weight), default 100
+- `cpu_quota_pct` — жёсткий лимит в % от ядра, 0 = только weight
+- `mem_limit_bytes` — жёсткий лимит RAM, 0 = без лимита
+- `io_weight` — blkio weight, default 100
+- `pids_limit` — max процессов/тредов
 
-`docs/openapi/etronium.swagger.json` сгенерирован из proto.
-Можно открыть в [Swagger Editor](https://editor.swagger.io/) для визуального просмотра.
+Два уровня:
+- **local_capacity** на lord'е — реальный cgroup лимит
+- **advertised_capacity** в proto — что scheduler показывает тенанту (может быть больше)
 
-**Важно:** OpenAPI покрывает только unary RPC. Server-streaming (`RunTask`, `StreamTask`)
-через grpc-gateway не маппится — они остаются gRPC-only.
+Linux kernel на lord'е видит только local_capacity.
 
 ## HTTP endpoints (для отладки через curl)
 
+Только unary RPC. Streaming остались gRPC-only.
+
 | Method | Path | RPC |
 |---|---|---|
-| POST | `/api/v1/tasks` | `SubmitTask` |
-| GET | `/api/v1/tasks` | `ListTasks` |
-| GET | `/api/v1/tasks/{taskId}` | `GetTask` |
-| POST | `/api/v1/tasks/{taskId}/cancel` | `CancelTask` |
-| POST | `/api/v1/tasks/{taskId}/control` | `ControlTask` |
+| POST | `/api/v1/processes` | `Spawn` |
+| GET | `/api/v1/processes` | `ListProcesses` |
+| GET | `/api/v1/processes/{processId}` | `GetProcess` |
+| POST | `/api/v1/processes/{processId}/kill` | `Kill` |
+| POST | `/api/v1/processes/{processId}/wait` | `Wait` |
+| POST | `/api/v1/processes/{processId}/migrate` | `Migrate` |
+| POST | `/api/v1/processes/{processId}/files` | `PushFile` |
 | GET | `/api/v1/lords` | `ListLords` |
 | POST | `/api/v1/lords/register` | `Register` |
 | POST | `/api/v1/lords/{lordId}/heartbeat` | `Heartbeat` |
 | POST | `/api/v1/lords/{lordId}/lazy-death` | `AcknowledgeLazyDeath` |
 
-## Task lifecycle (FSM)
-
-```
-QUEUED → SCHEDULED → PULLING → RUNNING → COMPLETED
-                                       ↘ FAILED
-                                       ↘ CANCELED
-```
-
-- **QUEUED** — задача в очереди scheduler'а, ждёт placement.
-- **SCHEDULED** — placement выбрал лорда, готовится отправка.
-- **PULLING** — лорд начал pull образа (Phase 1+).
-- **RUNNING** — контейнер стартовал, идёт исполнение.
-- **COMPLETED / FAILED / CANCELED** — финальные, переходов нет.
-
-В Phase 0 минимум: QUEUED → RUNNING → COMPLETED/FAILED.
-
 ## Идентификаторы
 
-- **`task_id`** — ULID (sortable, k8s-style). Можно сортировать по времени создания.
-- **`lord_id`** — ULID, присваивается scheduler'ом при `Register`.
-- **`tenant_id`** — строка, пока pre-shared per CLI install; auth — Phase 2+.
+- **`process_id`** — ULID (sortable, stable across migration)
+- **`lord_id`** — ULID
+- **`local_pid`** — int, меняется при миграции
+
+Глобально процесс адресуется через `(process_id)` ИЛИ `(lord_id, local_pid)`.
 
 ## Аутентификация
 
-В MVP — pre-shared token в gRPC metadata (`authorization: Bearer <token>`).
-Реализация откладывается в Phase 2.
+Pre-shared token в gRPC metadata (`authorization: Bearer <token>`).
+Scheduler проверяет при каждом RPC. Lord'ы тоже авторизуются в scheduler'е.
+
+## Файловые операции
+
+Только локальный копи (ADR 019):
+- `PullFile(process_id, path)` → scheduler просит lord прочитать → bytes
+- `PushFile(process_id, path, data)` → обратно
+- `InvalidateFileCache(process_id, path)` → сброс кэша
+- На lord'е LRU кэш с TTL + size limit
+- SHA-256 для integrity

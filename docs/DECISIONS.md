@@ -354,3 +354,224 @@ scheduler дописывает `midaswr/` автоматически.
 **Последствия:**
 - ✅ Один источник правды.
 - ⚠️ Если admin-операций станет много — отдельный сервис, но не сейчас.
+
+
+---
+
+## 016 — MOSIX-class SSI без kernel patches (2026-07-20)
+
+**Контекст:** Главный re-frame проекта. Не k8s-class, не task-queue, не "новый куб".
+Класс задачи — MOSIX/OpenMosix/Kerrighed: Single System Image поверх Linux,
+реализованная в user-space через имитацию NUMA-архитектуры на сети машин.
+
+Аналогия:
+  Scheduler = NUMA scheduler (общий планировщик ресурсов)
+  Lord      = NUMA-узел / ядро CPU (локальная память + execution units)
+  Process   = нить, может мигрировать между ядрами/Lord'ами
+
+Главный трюк: lord выглядит для своего Linux kernel'а так, будто у него
+есть ресурсы, которых физически нет. Когда процесс их просит — данные
+идут по сети. Это **user-space имитация NUMA overcommit**.
+
+**Решение:**
+- Гранулярность управления = процесс (не задача, не контейнер, не под)
+- Scheduler имеет глобальный view всех процессов и всех ресурсов
+- Lord имеет локальный view: видит только процессы на себе, ресурсы честные
+- Tenant имеет глобальный view **своих** процессов на всех lord'ах
+- Миграция = first-class операция (CRIU checkpoint + restore + reconnect)
+- cgroup имитация: каждый lord рекламирует `advertised_capacity` (в proto
+  `ResourceSpec`), реально держит `local_capacity`. Kernel lord'а не знает
+  про overcommit.
+
+**Альтернативы:**
+- Kernel patches (MOSIX/OpenMosix) — отвергнуто, нужно наш kernel таскать
+- Контейнерная абстракция (k8s) — отвергнуто как wrong abstraction level
+- Distributed OS from scratch (Sprite, Locus) — непрактично
+
+**Последствия:**
+- ✅ Можно запустить на стандартном Linux без модификаций ядра
+- ✅ Похоже на 90-е/2000-е исследования (MOSIX), есть академическая база
+- ✅ Решает задачи, которые k8s принципиально не решает (process migration,
+    memory pressure balancing без рестарта)
+- ⚠️ Overhead на каждом syscall/resource access — нужен smart caching
+- ⚠️ Миграция через CRIU не всё поддерживает (sockets, GPU context, eBPF)
+
+**Proto:** v2 полностью переписан, см. ADR 017.
+
+---
+
+## 017 — Proto v2: process API вместо task-queue (2026-07-20)
+
+**Контекст:** Контракт v1 был task-queue (`SubmitTask`/`TaskStatus`/`RunTask`).
+Не соответствует MOSIX-class модели.
+
+**Решение:** Proto v2 на POSIX-подобном API:
+- `Spawn` вместо `SubmitTask` (порождает процесс)
+- `Kill` вместо `CancelTask` (послать сигнал)
+- `Wait` — блокирующее ожидание exit
+- `Migrate` — first-class, не "новый submit" (CRIU)
+- `ProcessState` — POSIX-подобная FSM: NEW/READY/RUNNING/PAUSED/MIGRATING/EXITED/STOPPED
+- `ProcessRef { process_id, lord_id, local_pid }` — глобальная адресация
+- `ResourceSpec` — добавлены cpu_shares (cgroup weight), io_weight, pids_limit
+- `StreamProcessIO` — подключение к stdin/stdout/stderr живого процесса
+- `WatchProcess` — подписка на lifecycle events
+- `PullFile` / `PushFile` — локальный копи через scheduler
+- `InvalidateFileCache` — явная инвалидация кэша
+- `Checkpoint` / `Restore` (в LordService) — CRIU операции
+
+**Сервисы:**
+- `SchedulerService` — то что вызывает tenant (Spawn/Kill/Wait/Migrate/...)
+- `LordService` — то что scheduler вызывает на lord'е (ExecRemote/KillRemote/
+  StatsRemote/Checkpoint/Restore/FilePull/FilePush)
+
+**Альтернативы:**
+- Оставить task-queue и обернуть в процессы — костыль, не MOSIX
+- POSIX-like syscall API напрямую (open/read/write) — слишком низкоуровнево
+
+**Последствия:**
+- ✅ Семантика отражает NUMA-архитектуру
+- ✅ Миграция first-class, не afterthought
+- ⚠️ Переписали контракт — клиенты v1 (если есть) сломаются. Их пока нет.
+
+---
+
+## 018 — Иерархическая сетевая топология (2026-07-20)
+
+**Контекст:** Ответ на вопрос про сеть. Иерархия, не mesh.
+
+**Решение:**
+- Control plane: строго Scheduler ↔ Lord. Никаких lord↔lord control-трафик.
+- Data plane:
+  • Process I/O (stdin/stdout/stderr) — lord → scheduler → tenant
+  • Process ↔ Process network — выданные scheduler'ом endpoint'ы, peer-to-peer
+    между lord'ами где возможно, через relay на scheduler'е если lord'ы
+    не в одной L2-сети
+  • File transfer — scheduler координирует, реальный путь peer-to-peer
+- Tenant → Lord напрямую — только data, не control. Auth всегда через
+  scheduler.
+
+**Альтернативы:**
+- Mesh — проще в коде, но scheduler теряет visibility
+- Full relay через scheduler — проще реализовать, но +latency на пакет
+
+**Последствия:**
+- ✅ Scheduler видит всё (нужно для placement)
+- ✅ Минимальный data-plane overhead
+- ⚠️ Scheduler = SPOF для control. Решается HA в проде (не MVP).
+
+---
+
+## 019 — Локальный copy для файлов, без DFS (2026-07-20)
+
+**Контекст:** Решили без распределённой FS.
+
+**Решение:**
+- Каждый lord имеет локальный FS, общей нет
+- `PullFile(process_id, path)` — scheduler просит lord прочитать, передаёт tenant'у
+- `PushFile(process_id, path, data)` — обратно
+- На lord'е — file cache с TTL + size limit
+- `InvalidateFileCache(process_id, path)` — явный сброс
+- Checksum SHA-256 для integrity
+
+**Альтернативы:**
+- NFS/Lustre/Ceph — overhead, complexity, single point of failure
+- Никакого transfer (только stream) — не подходит для бинарников
+
+**Последствия:**
+- ✅ Просто, каждый lord независим
+- ✅ Кэширование на lord'е снижает latency
+- ⚠️ Stale data — решается явной invalidation
+
+---
+
+## 020 — Тенант видит свои процессы глобально (2026-07-20)
+
+**Контекст:** Уточнена терминология. Тенант = арендатор (платит), лорд = арендодатель (ресурсы).
+Тенант видит процессы своих лордов как единый пул.
+
+**Решение:**
+- `ListProcesses(tenant_id)` возвращает все процессы тенанта со ВСЕХ лордов
+- Каждый `ProcessInfo` содержит `ProcessRef { process_id, lord_id, local_pid }`
+- Tenant не знает про tenant'ов других — для него lord'ы это пул ресурсов
+- Scheduler — единственная сущность с глобальным view
+
+**Последствия:**
+- ✅ Арендатор думает "у меня N процессов", а не "у меня M аренд"
+- ⚠️ Если лордов тысячи — нужна иерархия. Для MVP ок.
+
+---
+
+## 021 — User-space имитация NUMA через cgroup delegation (2026-07-20)
+
+**Контекст:** "Обмануть Linux scheduler": lord выглядит для ядра так, будто у него
+есть ресурсы, которых на самом деле нет.
+
+**Решение:**
+- На lord'е создаётся виртуальный cgroup tree для каждого tenant'а
+- Реальные cgroup лимиты = `local_capacity` (что есть физически)
+- Виртуальные cgroup лимиты = `advertised_capacity` (что scheduler рекламирует
+  тенанту, может быть больше чем физическое)
+- Когда процесс упирается в `local_capacity`:
+  • scheduler мигрирует на другой lord, или
+  • сжимает с других tenant'ов на этом lord'е (weight rebalancing)
+- Linux scheduler внутри lord'а видит только локальные ресурсы
+
+**Альтернативы:**
+- Kernel-level overcommit (OpenVZ-style) — kernel patches, отвергнуто
+- Прямой CRIU/cgroup через user-space без имитации — lord знает что лимит
+
+**Последствия:**
+- ✅ Linux на lord'е не меняется
+- ✅ Scheduler контролирует overcommit policy
+- ⚠️ Fast path нужен для случая "процесс реально упёрся в CPU/memory прямо сейчас"
+    — иначе latency на миграцию
+
+---
+
+## 022 — Миграция через CRIU + reconnect (2026-07-20)
+
+**Контекст:** MOSIX делал миграцию в kernel. У нас user-space = CRIU.
+
+**Решение:**
+- Checkpoint: `Checkpoint(process_id, dir, leave_running)` — CRIU dump
+- Transfer: scheduler координирует передачу dump'а между lord'ами
+  (через scheduler-staging или прямым stream если lord'ы в одной сети)
+- Restore: `Restore(process_id, dump_path, exec/argv/env/resources)` — CRIU restore
+- Reconnect:
+  • stdin/stdout/stderr — пересоздаются через scheduler-routed streams
+  • TCP sockets — пересоздаются заново (не seamless, но и не критично)
+  • IPC handles — ремапятся если возможно
+
+**Альтернативы:**
+- Seamless remote memory paging (MOSIX2) — kernel-level, отвергнуто
+- VM-level live migration (KVM-style) — overkill, не процесс-гранулярно
+
+**Последствия:**
+- ✅ Работает на стандартном kernel
+- ✅ Процесс-гранулярно
+- ⚠️ Не все процессы поддерживаются CRIU (raw sockets, GPU, eBPF)
+- ⚠️ Reconnect — сложный код, особенно для долгоживущих TCP
+
+---
+
+## 023 — CRIU опционально, без миграции в Phase 0 (2026-07-20)
+
+**Контекст:** CRIU сильно усложняет код (checkpoint/restore + reconnect).
+
+**Решение:**
+- Phase 0: Spawn/Kill/Wait без миграции. Процесс живёт на lord'е, пока не
+  завершится или не будет убит.
+- Phase 1: добавляем `Migrate` через CRIU. На этом этапе все lord'ы должны
+  иметь CRIU установленный.
+- Lord'ы без CRIU помечают `criu_available=false` в Register — scheduler не
+  будет мигрировать на/с них.
+
+**Альтернативы:**
+- Сразу с CRIU — over-engineering для hello world
+- Без миграции навсегда — теряем ключевую фичу MOSIX-класса
+
+**Последствия:**
+- ✅ Phase 0 простой
+- ✅ Миграция появляется когда нужна
+- ⚠️ На ранних фазах lord'ы без CRIU — scheduler не сможет балансировать
+    нагрузку между ними.

@@ -1,39 +1,55 @@
 # Etronium-Scdr
 
-> Scheduler — single binary поверх распределённого железа.
-> Реинкарнация идеи Etronium, **без интеграции** с `../Etronium`.
-> Цель: минимально работающий MVP концепции "single runtime поверх распределённого железа".
+> **MOSIX-style Single System Image (SSI) поверх Linux, в user-space.**
+> Через имитацию NUMA-архитектуры на сети машин.
+> Scheduler = NUMA scheduler, Lords = cores, Processes = threads.
+
+Не k8s. Не task-queue. Не "новый куб". Решаем задачу класса MOSIX/OpenMosix/Kerrighed — то что пробовали в 90-х-2000-х, но без kernel patches.
 
 ## TL;DR
 
-- **Scheduler** (VPS) — single Go binary, gRPC API, in-memory state + WAL.
-- **Lord** (donor machine) — single Go binary, gRPC клиент к scheduler, исполняет задачи через **containerd** + cgroups v2.
-- **Tenant** — CLI (`etronium` Go binary через cobra), общается со scheduler по gRPC.
-- Стек: Go 1.22+, gRPC, protobuf, containerd, OCI spec.
+- **Scheduler** (VPS) — single Go binary, gRPC API, in-memory process table + WAL.
+- **Lord** (donor machine) — single Go binary, gRPC server. Локальный view: только свои процессы, честные ресурсы.
+- **Tenant** (арендатор) — CLI (`etronium` через cobra). Глобальный view: свои процессы на всех lord'ах.
+- Стек: Go 1.22+, gRPC, protobuf, cgroups v2, libcontainer, опционально CRIU.
 - **Никаких внешних БД** в MVP — in-memory state + WAL.
+- **Никаких kernel patches** — всё в user-space.
+
+## Архитектура (NUMA-аналогия)
+
+```
+Многоядерный CPU              Etronium-Scdr
+─────────────────             ─────────────────────────
+CPU scheduler                 Scheduler (1 binary, VPS)
+Ядра (cores)                  Lords (N binaries, donor machines)
+Нити (threads)                Tenant processes
+L1/L2 cache                   Lord local FS + file cache
+Memory bus / QPI              Network (hier control + P2P data)
+NUMA balancing                Process migration + weight rebalancing
+```
+
+Подробнее — [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 
 ## Документация
 
-Вся документация — в [`docs/`](./docs/):
-
 | Файл | Назначение |
 |---|---|
-| [`docs/RESEARCH.md`](./docs/RESEARCH.md) | стартовое исследование (импорт из исходного репо) |
-| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | целевая архитектура, диаграммы, контракты |
-| [`docs/ROADMAP.md`](./docs/ROADMAP.md) | поэтапный план реализации (фазы 0–5) |
-| [`docs/STACK.md`](./docs/STACK.md) | конкретные библиотеки, версии, что НЕ используем |
-| [`docs/PROTO.md`](./docs/PROTO.md) | gRPC контракт, HTTP endpoints, FSM задач |
-| [`docs/DECISIONS.md`](./docs/DECISIONS.md) | журнал принятых решений (ADR-style) |
-| [`docs/OPEN-QUESTIONS.md`](./docs/OPEN-QUESTIONS.md) | нерешённые вопросы, требующие решения до старта |
-| [`docs/openapi/etronium.swagger.json`](./docs/openapi/etronium.swagger.json) | сгенерированный swagger (открыть в editor.swagger.io) |
+| [`docs/RESEARCH.md`](./docs/RESEARCH.md) | Исследование (ре-фрейм 2026-07-20) |
+| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | NUMA-аналогия, потоки Spawn/Migrate |
+| [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Phase 0–5: hello world → persistence |
+| [`docs/STACK.md`](./docs/STACK.md) | Конкретные библиотеки, версии |
+| [`docs/PROTO.md`](./docs/PROTO.md) | gRPC контракт v2, FSM процессов |
+| [`docs/DECISIONS.md`](./docs/DECISIONS.md) | ADR-style журнал (23 записи) |
+| [`docs/OPEN-QUESTIONS.md`](./docs/OPEN-QUESTIONS.md) | Нерешённые вопросы |
+| [`docs/openapi/etronium.swagger.json`](./docs/openapi/etronium.swagger.json) | Сгенерированный swagger (10 paths, 35 types) |
 
 ## Контракт
 
-gRPC API определён в [`proto/etronium/v1/etronium.proto`](./proto/etronium/v1/etronium.proto).
+gRPC API в [`proto/etronium/v1/etronium.proto`](./proto/etronium/v1/etronium.proto).
 
 Два сервиса:
-- **`SchedulerService`** — клиентский (для tenant CLI).
-- **`LordService`** — для доноров-lord'ов.
+- **`SchedulerService`** — tenant вызывает Spawn/Kill/Wait/Migrate.
+- **`LordService`** — scheduler вызывает ExecRemote/KillRemote/Checkpoint/Restore.
 
 Сгенерированный Go лежит в `internal/gen/etronium/v1/`. Swagger — в `docs/openapi/`.
 
@@ -46,6 +62,5 @@ gRPC API определён в [`proto/etronium/v1/etronium.proto`](./proto/etro
 
 ## Связь с другим репо
 
-`../Etronium/` (TECH-MVP) — текущая реализация через HTTP pull + cgroups v2 напрямую + WebUI + PostgreSQL.
-**`Etronium-Scdr/` — независимый трек** на базе исследования от 2026-07-19. Общего кода нет. Знания и решения переносим только через документацию.
-# Etronium-Scdr
+`../Etronium/` (TECH-MVP) — старая реализация: HTTP pull + cgroups v2 напрямую + WebUI + PostgreSQL.
+**`Etronium-Scdr/` — независимый трек** на базе переосмысленного research от 2026-07-20. Общего кода нет.
