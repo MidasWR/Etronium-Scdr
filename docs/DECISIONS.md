@@ -153,3 +153,204 @@
 - ✅ Type-safe, нет shell-injection.
 - ✅ Совпадает с containerd API напрямую.
 - ⚠️ Менее удобно в CLI — `etronium task submit -- sh -c "..."` придётся мапить в argv.
+
+
+---
+
+## 009 — 1 tenant : N lords (fan-out placement) (2026-07-19)
+
+**Контекст:** Ответ на Open Question #1. Решили НЕ делать `1 lord = 1 tenant` (как в research),
+а вместо этого `1 tenant → N lords`. То есть тенант масштабируется **вширь** (несколько лордов
+параллельно), а не вглубь (мульти-тенант на одном лорде).
+
+**Решение:**
+- Placement по умолчанию = "один лучший лорд" (по score function).
+- Тенант может запросить fan-out: `SubmitTaskRequest.target_lord_count = N` (N > 1).
+- Scheduler создаёт parent task + N child tasks, по одному на лорда. Stream идёт от parent'а
+  ко всем child'ам параллельно. Результат parent'а агрегируется из children.
+- Мульти-тенант на одном лорде — поддерживается через cgroups v2 isolation, разные tenant_id
+  в одном контейнере НЕ живут.
+
+**Альтернативы:**
+- 1 lord = 1 tenant (research recommendation) — проще, но не масштабируется. Если у тенанта
+  задача CPU-heavy и требует 100 cores, ему надо 100 лордов, а не 1 lord с 100 cores.
+- Multiplex tenants в один контейнер — слишком шумно на стороне изоляции.
+
+**Последствия:**
+- ✅ Естественное масштабирование тенанта.
+- ✅ Placement функция становится сразу интересной.
+- ⚠️ Parent/child state machine сложнее. Появляется `ControlTask` для cascade-операций.
+- ⚠️ Агрегация результата из N лордов: ждём всех или хотя бы majority?
+  → MVP: ждём всех (consensus позже).
+
+**Proto изменения:**
+- `SubmitTaskRequest.target_lord_count`
+- `SubmitTaskResponse.child_task_ids`
+- `RunTaskRequest.parent_task_id`, `fanout_index`
+- `Task.parent_task_id` (для children)
+
+---
+
+## 010 — Volume mounts: статика с scheduler'а + DFS для динамики (2026-07-19)
+
+**Контекст:** Ответ на Open Question #2. Тенанту нужны файлы:
+- "Основа" (статика) — общие бинарники, конфиги, референсные данные. Не меняется часто.
+- "Динамика" — тенантские файлы, рантайм-артефакты. Меняется, защищённая.
+
+**Решение:** Три типа volume mounts:
+- `STATIC` — scheduler отдаёт файл/папку через внутренний канал (gRPC stream или NFS).
+  Read-only по умолчанию. Кэшируется на lord'е.
+- `DFS` — защищённое distributed storage. Auth через pre-shared ключ, id которого
+  указан в `VolumeMount.dfs_key_id`. Lord делает mount при старте контейнера.
+- `TMPFS` — RAM-backed, ephemeral. Для `/tmp`, scratch space.
+
+`source` — opaque URI: `static://path`, `dfs://bucket/key`, `tmpfs://size_mb`.
+
+**Альтернативы:**
+- S3 / MinIO как одно хранилище на всё — проще в разработке, но смешивает security boundaries.
+- Всё через NFS — единая точка отказа.
+- Копировать в lord перед стартом — медленно для больших статик.
+
+**Последствия:**
+- ✅ Чёткое разделение: что публичное (static), что защищённое (DFS).
+- ✅ Гибкость: тенант сам решает что ему нужно.
+- ⚠️ Три имплементации вместо одной. DFS — отдельный микросервис или часть scheduler'а?
+  → MVP: DFS = in-memory mock с pre-shared ключом, в проде — выделенный сервис.
+- ⚠️ Mount во время выполнения (Phase 5+) — отдельная задача, пока mounts только при создании.
+
+**Proto изменения:**
+- `VolumeType` enum
+- `VolumeMount` message
+- `SubmitTaskRequest.volumes`, `RunTaskRequest.volumes`
+
+---
+
+## 011 — Приватный image registry `midaswr` (2026-07-19)
+
+**Контекст:** Ответ на Open Question #3. Ключ на машине уже есть, свой регистр.
+
+**Решение:** Lord конфигурируется с endpoint'ом `midaswr` registry и pre-shared TLS key.
+Containerd пулит образы оттуда. Default `image` в `SubmitTaskRequest` не имеет префикса —
+scheduler дописывает `midaswr/` автоматически.
+
+Пример:
+- Тенант пишет `--image=myimage:tag`
+- Scheduler интерпретирует как `midaswr/myimage:tag`
+- Lord делает pull `https://midaswr.local/v2/myimage/manifests/tag` с TLS key
+
+Публичные образы (alpine, ubuntu) — по-прежнему работают, явно через `docker.io/alpine` или
+`library/alpine`.
+
+**Альтернативы:**
+- Docker Hub — отказано в OpenQ #3.
+- Per-tenant registries — избыточно для MVP.
+
+**Последствия:**
+- ✅ Контроль над тем, какие образы доступны.
+- ✅ Безопасность: чужой тенант не зальёт malicious image.
+- ⚠️ Один registry на всех — single point of failure. Зеркало — Phase 5+.
+- ⚠️ Конфиг lord'а: где хранить TLS key? `/etc/etronium/midaswr-tls.key` с 0600 perms.
+
+---
+
+## 012 — Pre-shared token в gRPC metadata (MVP auth) (2026-07-19)
+
+**Контекст:** Ответ на Open Question #4. Для MVP общий токен хватит.
+
+**Решение:**
+- Один pre-shared token на всё Etronium-Scdr развёртывание, прописан в конфиге scheduler'а
+  и lord'ов через переменную `ETRONIUM_SHARED_TOKEN`.
+- Передаётся в gRPC metadata: `authorization: Bearer <token>`.
+- Tenant CLI получает токен из конфига при установке (`~/.etronium/config.yaml`).
+- Lord получает токен из env при старте.
+
+**Альтернативы:**
+- mTLS — production-grade, но сложнее в setup для MVP.
+- Per-tenant tokens — не нужно пока (один тенант = одна установка CLI).
+- OAuth/JWT — overkill для MVP.
+
+**Последствия:**
+- ✅ Просто: один env var, одна строка в metadata.
+- ✅ Достаточно для изоляции scheduler↔lord и tenant↔scheduler.
+- ⚠️ Компрометация ключа = компрометация всего. Для MVP ок, для prod — mTLS.
+- ⚠️ Нет per-tenant authorization — любой с токеном может submit от любого tenant_id.
+  → Phase 2+: tenant_id из metadata сверяется с заявленным в Request.
+
+**Proto:** без изменений, формат хардкодится в middleware.
+
+---
+
+## 013 — Stream lifecycle: kill/restart/replace через ControlTask (2026-07-19)
+
+**Контекст:** Ответ на Open Question #5. Нужно управлять жизненным циклом стримов,
+не только live logs. Уточнил: стримы могут умирать, перезапускаться, переезжать.
+
+**Решение:** Отдельный RPC `ControlTask(task_id, action)` с действиями:
+- `PAUSE` — `cgroup.freeze=1` + SIGSTOP контейнеру. State сохраняется.
+- `RESUME` — обратное.
+- `RESTART` — убить контейнер, пересоздать, перезапустить процесс. Тот же `task_id`,
+  свежие счётчики ресурсов.
+- `RELOCATE` — остановить + вернуть в очередь с новым placement. Полезно если лорд
+  деградирует (CPU steal, OOM killer).
+- `CANCEL` — алиас `CancelTask` для единого API.
+
+Применяется к parent task — каскадно на всех child'ов при fan-out (`ControlTaskResponse.affected_task_ids`).
+
+**Альтернативы:**
+- Расширить `CancelTask` enum'ом — но семантика другая, лучше отдельный RPC.
+- WebSocket control channel — отдельный стрим для команд. Сложнее, не нужно в MVP.
+
+**Последствия:**
+- ✅ Один endpoint для управления lifecycle.
+- ✅ Cascade на fan-out children.
+- ⚠️ Relocate требует переигровки placement — увеличивает latency на cancel.
+- ⚠️ Pause/Resume требует поддержки `cgroup.freeze` (есть в v2).
+
+**Proto изменения:**
+- `ControlAction` enum
+- `ControlTaskRequest` / `ControlTaskResponse`
+- HTTP: `POST /api/v1/tasks/{task_id}/control`
+
+---
+
+## 014 — Multi-lord и placement с Phase 0 (2026-07-19)
+
+**Контекст:** Ответ на Open Question #6. Решили закладывать динамику под N лордов
+с самого начала, а не откладывать в Phase 3.
+
+**Решение:**
+- С Phase 0 — scheduler умеет регистрировать нескольких лордов (`LordService.Register`).
+- В Phase 0 placement = "первый зарегистрированный лорд со свободными ресурсами"
+  (trivially fair). Fan-out (`target_lord_count > 1`) тоже работает, но placement trivial.
+- В Phase 3 placement = weighted score `rep × (1-load) × locality` (по research).
+- `Lord` уже содержит все нужные поля: `capacity`, `reputation`, `last_seen`, `healthy`.
+
+**Альтернативы:**
+- Phase 0 = 1 лорд (как в research) — проще, но придётся переписывать в Phase 3.
+- Phase 0 = placement function сразу — over-engineering для "hello world".
+
+**Последствия:**
+- ✅ Phase 0 → Phase 3 = эволюция placement, а не переписывание.
+- ⚠️ Phase 0 placement тривиальный — может давать плохое распределение при N лордах,
+  но это и не важно в Phase 0 (там один тенант с одной задачей).
+
+---
+
+## 015 — Управление scheduler'ом через тот же proto (2026-07-19)
+
+**Контекст:** Ответ на Open Question #8. Proto = и контракт, и admin-интерфейс к scheduler'у.
+
+**Решение:** Отдельного admin API нет. Все операции — через `SchedulerService`:
+- `ControlTask` для lifecycle (см. ADR 013).
+- `ListLords` для мониторинга.
+- `ListTasks` для аудита.
+- Для будущего admin (Phase 5+): добавим RPC в тот же сервис с tag'ом `admin`,
+  не отдельный proto.
+
+**Альтернативы:**
+- Отдельный `AdminService` — можно, но преждевременно.
+- REST admin endpoint — дублирование API.
+
+**Последствия:**
+- ✅ Один источник правды.
+- ⚠️ Если admin-операций станет много — отдельный сервис, но не сейчас.

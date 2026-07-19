@@ -88,6 +88,39 @@ message TaskResult {
 }
 
 // =====================================================================
+//  Volume / Storage — ответ на Open Question #2.
+//
+//  Архитектура:
+//   • Статика (бинарники, конфиги, референсные данные) — на stateless
+//     сервере scheduler'а, раздаётся через volume mount в lord'а по
+//     внутренней сети (gRPC или NFS — implementation detail).
+//   • Динамика (тенантские файлы, рантайм-артефакты) — защищённая DFS,
+//     доступ через pre-shared ключ. Lord подключается по требованию.
+//
+//  `mount_path` — абсолютный путь внутри контейнера.
+//  `source` — opaque ref, интерпретируется lord'ом в зависимости от типа:
+//    • "static://path"       — отдать файл/папку со scheduler'а
+//    • "dfs://bucket/key"    — забрать из DFS (с auth)
+//    • "tmpfs://size_mb"     — tmpfs в RAM
+// =====================================================================
+
+enum VolumeType {
+  VOLUME_TYPE_UNSPECIFIED = 0;
+  VOLUME_TYPE_STATIC  = 1;  // чтение со scheduler'а (read-only по умолчанию)
+  VOLUME_TYPE_DFS     = 2;  // чтение/запись из защищённой DFS (auth на lord'е)
+  VOLUME_TYPE_TMPFS   = 3;  // RAM-backed, ephemeral
+}
+
+message VolumeMount {
+  string       name       = 1;  // имя внутри контейнера, должно быть валидным как том containerd
+  VolumeType   type       = 2;
+  string       source     = 3;  // см. формат выше; для TMPFS — size, напр. "100mb"
+  string       mount_path = 4;  // абсолютный путь в контейнере
+  bool         read_only  = 5;
+  string       dfs_key_id = 6;  // опционально, какой pre-shared ключ использовать (DFS only)
+}
+
+// =====================================================================
 //  SchedulerService — для tenant'а (etronium CLI)
 //
 //  Тенант НЕ ходит напрямую к лорду. Всё через scheduler.
@@ -157,6 +190,29 @@ service SchedulerService {
     };
   }
 
+  // ControlTask — операторский RPC для управления жизненным циклом задачи
+  // (ответ на Open Question #5: kill/restart/replace стримов).
+  //
+  // Семантика отличается от CancelTask:
+  //   • PAUSE  — приостановить (SIGSTOP контейнеру, cgroup.freeze=1)
+  //   • RESUME — продолжить (SIGCONT, cgroup.freeze=0)
+  //   • RESTART — убить контейнер и перезапустить (сохраняет task_id, сбрасывает счётчики)
+  //   • RELOCATE — остановить и поставить в очередь заново на другом лорде (placement заново)
+  //   • CANCEL  — алиас для CancelTask (для единого API)
+  //
+  // Применяется к parent task — каскадно на всех child'ов при fan-out.
+  rpc ControlTask(ControlTaskRequest) returns (ControlTaskResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/tasks/{task_id}/control"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Control task lifecycle (pause/resume/restart/relocate/cancel)"
+      description: "Operator-level control over running task. Cascades to fan-out children."
+      tags: "tenant"
+    };
+  }
+
   // StreamTask — server streaming логов и финального результата.
   //
   // Открывает server-side stream: шлёт LogChunk'и по мере появления,
@@ -187,16 +243,21 @@ service SchedulerService {
 
 message SubmitTaskRequest {
   string tenant_id   = 1;  // пока pre-shared per CLI install; auth — Phase 2+
-  string image       = 2;  // OCI reference, e.g. "alpine", "alpine:3.20", "ghcr.io/x/y:tag"
+  string image       = 2;  // OCI reference, e.g. "alpine", "alpine:3.20", "ghcr.io/midaswr/myimage:tag"
   repeated string command = 3;  // argv-style: ["sh", "-c", "echo hi"]
   ResourceSpec resources = 4;  // optional, defaults из конфига scheduler'а
   map<string, string> env = 5;  // env vars для контейнера (Phase 1+)
   map<string, string> labels = 6;  // произвольные метаданные тенанта
+  repeated VolumeMount volumes = 7;  // см. VolumeMount; статика/DFS/tmpfs
+  int32 target_lord_count = 8;  // fan-out: 1 = один лорд, N = параллельно N лордов (ответ на OpenQ #1)
+  // Если 0 — scheduler сам выбирает на основе ресурсов задачи и доступных лордов.
+  // Если > 1 — создаётся "parent task" + N child tasks, по одному на лорда.
 }
 
 message SubmitTaskResponse {
-  string task_id = 1;  // ULID, sortable
+  string task_id = 1;  // ULID, sortable; parent task_id если target_lord_count > 1
   TaskStatus initial_status = 2;  // обычно QUEUED
+  repeated string child_task_ids = 3;  // populated если был fan-out (parent → N children)
 }
 
 message GetTaskRequest {
@@ -222,6 +283,29 @@ message CancelTaskRequest {
 message CancelTaskResponse {
   bool   acknowledged = 1;  // scheduler принял запрос
   TaskStatus current_status = 2;
+}
+
+// Control action для ControlTask.
+enum ControlAction {
+  CONTROL_ACTION_UNSPECIFIED = 0;
+  CONTROL_ACTION_PAUSE     = 1;  // freeze cgroup, SIGSTOP
+  CONTROL_ACTION_RESUME    = 2;  // thaw cgroup, SIGCONT
+  CONTROL_ACTION_RESTART   = 3;  // kill + rerun (same task_id, fresh container)
+  CONTROL_ACTION_RELOCATE  = 4;  // stop + requeue на другом лорде (placement заново)
+  CONTROL_ACTION_CANCEL    = 5;  // алиас CancelTask для единого API
+}
+
+message ControlTaskRequest {
+  string task_id = 1;
+  ControlAction action = 2;
+  bool   force = 3;     // для CANCEL: true=SIGKILL, false=SIGTERM+grace
+  string reason = 4;    // human-readable, логируется в audit
+}
+
+message ControlTaskResponse {
+  bool   acknowledged = 1;
+  TaskStatus current_status = 2;
+  repeated string affected_task_ids = 3;  // при fan-out: parent + children
 }
 
 message StreamTaskRequest {
@@ -345,6 +429,9 @@ message RunTaskRequest {
   ResourceSpec resources = 5;
   map<string, string> env = 6;
   google.protobuf.Timestamp deadline = 7;  // absolute deadline (started_at + timeout)
+  repeated VolumeMount volumes = 8;  // см. SubmitTaskRequest
+  string parent_task_id = 9;  // непустой если это child при fan-out (target_lord_count > 1)
+  int32  fanout_index = 10;   // 0..N-1, индекс ребёнка в fan-out
 }
 
 // TaskUpdate — то что лорд шлёт scheduler'у в RunTask stream.

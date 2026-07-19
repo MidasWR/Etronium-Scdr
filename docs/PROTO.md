@@ -18,12 +18,31 @@
 | `GetTask` | unary | tenant → scheduler | Phase 0 |
 | `ListTasks` | unary | tenant → scheduler | Phase 0 |
 | `CancelTask` | unary | tenant → scheduler | Phase 0 |
+| `ControlTask` | unary | tenant/scheduler | Phase 1 (для cascade на fan-out) |
 | `ListLords` | unary | tenant → scheduler | Phase 0 |
 | `StreamTask` | server stream | tenant → scheduler | Phase 2 |
 | `Register` | unary | lord → scheduler | Phase 0 |
 | `Heartbeat` | unary (MVP) / bidi (Phase 3+) | lord → scheduler | Phase 0 (unary) |
 | `RunTask` | server stream | scheduler → lord | Phase 0 (упрощённый), Phase 1 (полный) |
 | `AcknowledgeLazyDeath` | unary | lord → scheduler | Phase 4 |
+
+## Fan-out (1 tenant → N lords)
+
+`SubmitTaskRequest.target_lord_count = N` (N > 1) → scheduler создаёт:
+- parent task (status = RUNNING когда все children завершились)
+- N child tasks, по одному на лорда (status = свой жизненный цикл)
+
+`RunTaskRequest` у каждого child содержит `parent_task_id` и `fanout_index` (0..N-1).
+`ControlTask` на parent cascade'ом применяется ко всем children (`ControlTaskResponse.affected_task_ids`).
+
+## Volume mounts
+
+Три типа (`VolumeType`):
+- `STATIC` — статика со scheduler'а, read-only. `source: "static://path"`.
+- `DFS` — защищённое хранилище с pre-shared ключом. `source: "dfs://bucket/key"`, опционально `dfs_key_id`.
+- `TMPFS` — RAM-backed. `source: "tmpfs://100mb"`.
+
+Монтируются при создании контейнера; hot-mount — Phase 5+.
 
 ## OpenAPI / Swagger
 
@@ -41,6 +60,7 @@
 | GET | `/api/v1/tasks` | `ListTasks` |
 | GET | `/api/v1/tasks/{taskId}` | `GetTask` |
 | POST | `/api/v1/tasks/{taskId}/cancel` | `CancelTask` |
+| POST | `/api/v1/tasks/{taskId}/control` | `ControlTask` |
 | GET | `/api/v1/lords` | `ListLords` |
 | POST | `/api/v1/lords/register` | `Register` |
 | POST | `/api/v1/lords/{lordId}/heartbeat` | `Heartbeat` |

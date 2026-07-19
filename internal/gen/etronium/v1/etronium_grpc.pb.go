@@ -33,12 +33,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SchedulerService_SubmitTask_FullMethodName = "/etronium.v1.SchedulerService/SubmitTask"
-	SchedulerService_GetTask_FullMethodName    = "/etronium.v1.SchedulerService/GetTask"
-	SchedulerService_ListTasks_FullMethodName  = "/etronium.v1.SchedulerService/ListTasks"
-	SchedulerService_CancelTask_FullMethodName = "/etronium.v1.SchedulerService/CancelTask"
-	SchedulerService_StreamTask_FullMethodName = "/etronium.v1.SchedulerService/StreamTask"
-	SchedulerService_ListLords_FullMethodName  = "/etronium.v1.SchedulerService/ListLords"
+	SchedulerService_SubmitTask_FullMethodName  = "/etronium.v1.SchedulerService/SubmitTask"
+	SchedulerService_GetTask_FullMethodName     = "/etronium.v1.SchedulerService/GetTask"
+	SchedulerService_ListTasks_FullMethodName   = "/etronium.v1.SchedulerService/ListTasks"
+	SchedulerService_CancelTask_FullMethodName  = "/etronium.v1.SchedulerService/CancelTask"
+	SchedulerService_ControlTask_FullMethodName = "/etronium.v1.SchedulerService/ControlTask"
+	SchedulerService_StreamTask_FullMethodName  = "/etronium.v1.SchedulerService/StreamTask"
+	SchedulerService_ListLords_FullMethodName   = "/etronium.v1.SchedulerService/ListLords"
 )
 
 // SchedulerServiceClient is the client API for SchedulerService service.
@@ -62,6 +63,18 @@ type SchedulerServiceClient interface {
 	//
 	// Best-effort: если lord уже стартовал контейнер, шлёт SIGTERM/SIGKILL.
 	CancelTask(ctx context.Context, in *CancelTaskRequest, opts ...grpc.CallOption) (*CancelTaskResponse, error)
+	// ControlTask — операторский RPC для управления жизненным циклом задачи
+	// (ответ на Open Question #5: kill/restart/replace стримов).
+	//
+	// Семантика отличается от CancelTask:
+	//   - PAUSE  — приостановить (SIGSTOP контейнеру, cgroup.freeze=1)
+	//   - RESUME — продолжить (SIGCONT, cgroup.freeze=0)
+	//   - RESTART — убить контейнер и перезапустить (сохраняет task_id, сбрасывает счётчики)
+	//   - RELOCATE — остановить и поставить в очередь заново на другом лорде (placement заново)
+	//   - CANCEL  — алиас для CancelTask (для единого API)
+	//
+	// Применяется к parent task — каскадно на всех child'ов при fan-out.
+	ControlTask(ctx context.Context, in *ControlTaskRequest, opts ...grpc.CallOption) (*ControlTaskResponse, error)
 	// StreamTask — server streaming логов и финального результата.
 	//
 	// Открывает server-side stream: шлёт LogChunk'и по мере появления,
@@ -120,6 +133,16 @@ func (c *schedulerServiceClient) CancelTask(ctx context.Context, in *CancelTaskR
 	return out, nil
 }
 
+func (c *schedulerServiceClient) ControlTask(ctx context.Context, in *ControlTaskRequest, opts ...grpc.CallOption) (*ControlTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ControlTaskResponse)
+	err := c.cc.Invoke(ctx, SchedulerService_ControlTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *schedulerServiceClient) StreamTask(ctx context.Context, in *StreamTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TaskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &SchedulerService_ServiceDesc.Streams[0], SchedulerService_StreamTask_FullMethodName, cOpts...)
@@ -170,6 +193,18 @@ type SchedulerServiceServer interface {
 	//
 	// Best-effort: если lord уже стартовал контейнер, шлёт SIGTERM/SIGKILL.
 	CancelTask(context.Context, *CancelTaskRequest) (*CancelTaskResponse, error)
+	// ControlTask — операторский RPC для управления жизненным циклом задачи
+	// (ответ на Open Question #5: kill/restart/replace стримов).
+	//
+	// Семантика отличается от CancelTask:
+	//   - PAUSE  — приостановить (SIGSTOP контейнеру, cgroup.freeze=1)
+	//   - RESUME — продолжить (SIGCONT, cgroup.freeze=0)
+	//   - RESTART — убить контейнер и перезапустить (сохраняет task_id, сбрасывает счётчики)
+	//   - RELOCATE — остановить и поставить в очередь заново на другом лорде (placement заново)
+	//   - CANCEL  — алиас для CancelTask (для единого API)
+	//
+	// Применяется к parent task — каскадно на всех child'ов при fan-out.
+	ControlTask(context.Context, *ControlTaskRequest) (*ControlTaskResponse, error)
 	// StreamTask — server streaming логов и финального результата.
 	//
 	// Открывает server-side stream: шлёт LogChunk'и по мере появления,
@@ -199,6 +234,9 @@ func (UnimplementedSchedulerServiceServer) ListTasks(context.Context, *ListTasks
 }
 func (UnimplementedSchedulerServiceServer) CancelTask(context.Context, *CancelTaskRequest) (*CancelTaskResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CancelTask not implemented")
+}
+func (UnimplementedSchedulerServiceServer) ControlTask(context.Context, *ControlTaskRequest) (*ControlTaskResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ControlTask not implemented")
 }
 func (UnimplementedSchedulerServiceServer) StreamTask(*StreamTaskRequest, grpc.ServerStreamingServer[TaskEvent]) error {
 	return status.Errorf(codes.Unimplemented, "method StreamTask not implemented")
@@ -299,6 +337,24 @@ func _SchedulerService_CancelTask_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SchedulerService_ControlTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ControlTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulerServiceServer).ControlTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulerService_ControlTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulerServiceServer).ControlTask(ctx, req.(*ControlTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SchedulerService_StreamTask_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(StreamTaskRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -350,6 +406,10 @@ var SchedulerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelTask",
 			Handler:    _SchedulerService_CancelTask_Handler,
+		},
+		{
+			MethodName: "ControlTask",
+			Handler:    _SchedulerService_ControlTask_Handler,
 		},
 		{
 			MethodName: "ListLords",

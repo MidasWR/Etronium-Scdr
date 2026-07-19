@@ -324,6 +324,46 @@
           "tenant"
         ]
       }
+    },
+    "/api/v1/tasks/{taskId}/control": {
+      "post": {
+        "summary": "Control task lifecycle (pause/resume/restart/relocate/cancel)",
+        "description": "Operator-level control over running task. Cascades to fan-out children.",
+        "operationId": "SchedulerService_ControlTask",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ControlTaskResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/SchedulerServiceControlTaskBody"
+            }
+          }
+        ],
+        "tags": [
+          "tenant"
+        ]
+      }
     }
   },
   "definitions": {
@@ -372,6 +412,22 @@
         "force": {
           "type": "boolean",
           "title": "true = SIGKILL, false (default) = SIGTERM + grace period"
+        }
+      }
+    },
+    "SchedulerServiceControlTaskBody": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/definitions/v1ControlAction"
+        },
+        "force": {
+          "type": "boolean",
+          "title": "для CANCEL: true=SIGKILL, false=SIGTERM+grace"
+        },
+        "reason": {
+          "type": "string",
+          "title": "human-readable, логируется в audit"
         }
       }
     },
@@ -438,6 +494,37 @@
         "at": {
           "type": "string",
           "format": "date-time"
+        }
+      }
+    },
+    "v1ControlAction": {
+      "type": "string",
+      "enum": [
+        "CONTROL_ACTION_UNSPECIFIED",
+        "CONTROL_ACTION_PAUSE",
+        "CONTROL_ACTION_RESUME",
+        "CONTROL_ACTION_RESTART",
+        "CONTROL_ACTION_RELOCATE",
+        "CONTROL_ACTION_CANCEL"
+      ],
+      "default": "CONTROL_ACTION_UNSPECIFIED",
+      "description": "Control action для ControlTask.\n\n - CONTROL_ACTION_PAUSE: freeze cgroup, SIGSTOP\n - CONTROL_ACTION_RESUME: thaw cgroup, SIGCONT\n - CONTROL_ACTION_RESTART: kill + rerun (same task_id, fresh container)\n - CONTROL_ACTION_RELOCATE: stop + requeue на другом лорде (placement заново)\n - CONTROL_ACTION_CANCEL: алиас CancelTask для единого API"
+    },
+    "v1ControlTaskResponse": {
+      "type": "object",
+      "properties": {
+        "acknowledged": {
+          "type": "boolean"
+        },
+        "currentStatus": {
+          "$ref": "#/definitions/v1TaskStatus"
+        },
+        "affectedTaskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "при fan-out: parent + children"
         }
       }
     },
@@ -623,7 +710,7 @@
         },
         "image": {
           "type": "string",
-          "title": "OCI reference, e.g. \"alpine\", \"alpine:3.20\", \"ghcr.io/x/y:tag\""
+          "title": "OCI reference, e.g. \"alpine\", \"alpine:3.20\", \"ghcr.io/midaswr/myimage:tag\""
         },
         "command": {
           "type": "array",
@@ -649,6 +736,19 @@
             "type": "string"
           },
           "title": "произвольные метаданные тенанта"
+        },
+        "volumes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1VolumeMount"
+          },
+          "title": "см. VolumeMount; статика/DFS/tmpfs"
+        },
+        "targetLordCount": {
+          "type": "integer",
+          "format": "int32",
+          "title": "fan-out: 1 = один лорд, N = параллельно N лордов (ответ на OpenQ #1)"
         }
       }
     },
@@ -657,11 +757,18 @@
       "properties": {
         "taskId": {
           "type": "string",
-          "title": "ULID, sortable"
+          "title": "ULID, sortable; parent task_id если target_lord_count \u003e 1"
         },
         "initialStatus": {
           "$ref": "#/definitions/v1TaskStatus",
           "title": "обычно QUEUED"
+        },
+        "childTaskIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "title": "populated если был fan-out (parent → N children)"
         }
       }
     },
@@ -822,6 +929,44 @@
         }
       },
       "description": "TaskUpdate — то что лорд шлёт scheduler'у в RunTask stream.\n\nЭволюция статусов внутри одной задачи:\n  QUEUED → SCHEDULED → PULLING → RUNNING → COMPLETED|FAILED|CANCELED"
+    },
+    "v1VolumeMount": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "имя внутри контейнера, должно быть валидным как том containerd"
+        },
+        "type": {
+          "$ref": "#/definitions/v1VolumeType"
+        },
+        "source": {
+          "type": "string",
+          "title": "см. формат выше; для TMPFS — size, напр. \"100mb\""
+        },
+        "mountPath": {
+          "type": "string",
+          "title": "абсолютный путь в контейнере"
+        },
+        "readOnly": {
+          "type": "boolean"
+        },
+        "dfsKeyId": {
+          "type": "string",
+          "title": "опционально, какой pre-shared ключ использовать (DFS only)"
+        }
+      }
+    },
+    "v1VolumeType": {
+      "type": "string",
+      "enum": [
+        "VOLUME_TYPE_UNSPECIFIED",
+        "VOLUME_TYPE_STATIC",
+        "VOLUME_TYPE_DFS",
+        "VOLUME_TYPE_TMPFS"
+      ],
+      "default": "VOLUME_TYPE_UNSPECIFIED",
+      "title": "- VOLUME_TYPE_STATIC: чтение со scheduler'а (read-only по умолчанию)\n - VOLUME_TYPE_DFS: чтение/запись из защищённой DFS (auth на lord'е)\n - VOLUME_TYPE_TMPFS: RAM-backed, ephemeral"
     }
   }
 }
