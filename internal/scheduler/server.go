@@ -75,6 +75,9 @@ func (s *Server) Spawn(ctx context.Context, req *etroniumv1.SpawnRequest) (*etro
 	if req.ExecPath == "" {
 		return nil, status.Error(codes.InvalidArgument, "exec_path required")
 	}
+	if err := validateResources(req.Resources); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid resources: %v", err)
+	}
 
 	// 1. Placement
 	lord := s.lords.Pick(req.PreferLordId)
@@ -293,4 +296,37 @@ func copyMap(m map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// validateResources проверяет что ResourceSpec находится в допустимых рамках.
+//
+// Правила Phase 1:
+//   - cpu_shares: 1..10000 (cgroup cpu.weight)
+//   - cpu_quota_pct: 0..100 (Phase 2, не используется lord'ом в Phase 1)
+//   - mem_limit_bytes: > 0 (если задан); 0 = no limit
+//   - io_weight: 1..10000 (cgroup io.weight)
+//   - pids_limit: 0..1000000 (cgroup pids.max); 0 = no limit
+//
+// 0 трактуется как "не задано" и пропускается. Отрицательные / out-of-range
+// возвращают ошибку.
+func validateResources(r *etroniumv1.ResourceSpec) error {
+	if r == nil {
+		return nil
+	}
+	if r.CpuShares < 0 || r.CpuShares > 10000 {
+		return fmt.Errorf("cpu_shares out of range [0..10000]: %d", r.CpuShares)
+	}
+	if r.CpuQuotaPct < 0 || r.CpuQuotaPct > 100 {
+		return fmt.Errorf("cpu_quota_pct out of range [0..100]: %d", r.CpuQuotaPct)
+	}
+	if r.MemLimitBytes < 0 {
+		return fmt.Errorf("mem_limit_bytes must be > 0: %d", r.MemLimitBytes)
+	}
+	if r.IoWeight < 0 || r.IoWeight > 10000 {
+		return fmt.Errorf("io_weight out of range [0..10000]: %d", r.IoWeight)
+	}
+	if r.PidsLimit < 0 || r.PidsLimit > 1000000 {
+		return fmt.Errorf("pids_limit out of range [0..1000000]: %d", r.PidsLimit)
+	}
+	return nil
 }

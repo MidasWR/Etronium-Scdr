@@ -38,6 +38,10 @@ type Agent struct {
 	conn   *grpc.ClientConn
 	client etroniumv1.LordServiceClient
 
+	// cgroup manager — lazy init после Register (нужен lordID)
+	cg      *CgroupManager
+	cgMu    sync.Mutex
+
 	// Active local processes keyed by process_id
 	procsMu sync.RWMutex
 	procs   map[string]*localProcess
@@ -53,6 +57,11 @@ type Agent struct {
 	// shutdownCtx — отменяется из main loop при ошибке stream'а
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
+
+	// CPU delta sampling для heartbeat
+	cpuStatsMu  sync.Mutex
+	lastCpuUsec uint64
+	lastSampleAt time.Time
 }
 
 // localProcess — запись о процессе который lord запустил.
@@ -178,6 +187,19 @@ func (a *Agent) recvLoop(ctx context.Context, stream etroniumv1.LordService_Conn
 	a.lordIDMu.Unlock()
 	a.logger.Info("registered with scheduler", "lord_id", a.lordID)
 
+	// 3.5 Lazy-init cgroup manager (нужен lordID для slice path).
+	cgm, err := NewCgroupManager(a.lordID, a.logger)
+	if err != nil {
+		// Не фатально — lord стартует без cgroup, но все ресурсы будут no-op.
+		a.logger.Warn("cgroup manager init failed, resource limits disabled",
+			"err", err,
+		)
+	} else {
+		a.cgMu.Lock()
+		a.cg = cgm
+		a.cgMu.Unlock()
+	}
+
 	// 4. Цикл обработки событий
 	for {
 		// Heartbeat (non-blocking) + Recv (blocking)
@@ -221,8 +243,8 @@ func (a *Agent) recvLoop(ctx context.Context, stream etroniumv1.LordService_Conn
 
 func (a *Agent) sendHeartbeat() error {
 	active := int32(len(a.procs))
-	// Берём CPU/RAM текущие (для Phase 0 = приблизительно)
-	cpuPct, memBytes := getCurrentUsage()
+	// Берём CPU/RAM текущие из cgroup агрегата
+	cpuPct, memBytes := a.getCurrentUsage()
 	a.outbox <- &etroniumv1.LordCmd{
 		Cmd: &etroniumv1.LordCmd_Heartbeat{
 			Heartbeat: &etroniumv1.HeartbeatRequest{

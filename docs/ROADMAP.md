@@ -63,20 +63,33 @@ lord-01  healthy=true  cpu=2%  mem=120MB  procs=0
 
 **Цель:** реальная изоляция через cgroups v2. Готовность к overcommit.
 
-- [ ] Lord: cgroup_manager с tree, limits (cpu/memory/io/pids), stats, freeze
-- [ ] Lord: exec через cgroup-attached fork (вместо простого os/exec)
-- [ ] Scheduler: учитывает `local_capacity` lord'ов в placement
-- [ ] Scheduler: `ResourceSpec` валидация (cpu_shares, cpu_quota_pct, mem_limit_bytes)
+- [x] Lord: cgroup_manager с tree, limits (cpu/memory/io/pids), stats, cleanup
+- [x] Lord: exec через cgroup-attached fork (вместо простого os/exec)
+- [x] Scheduler: `ResourceSpec` валидация (cpu_shares, cpu_quota_pct, mem_limit_bytes, io_weight, pids_limit)
+- [x] Lord: heartbeat читает реальные cpu/mem из cgroup агрегата (delta sampling)
+- [ ] Scheduler: учитывает `local_capacity` lord'ов в placement (Phase 2)
 - [ ] Lord: SIGSTOP/SIGCONT через cgroup.freeze для PAUSED state
 - [ ] Lord: /proc/<pid>/ inspection для state introspection
 - [ ] Tenant CLI: `etronium process pause <id>` / `resume`
 - [ ] Tenant CLI: `etronium process stats <id>`
+
+**Реализовано в commit d7591a6+phase1:**
+- `internal/lord/cgroup.go` — CgroupManager (mkdir slice, enable controllers, write limits, attach PID, read stats, destroy)
+- `internal/lord/stats.go` — agent.getCurrentUsage() читает cgroup.usage_usec + memory.current агрегата
+- `internal/scheduler/server.go` — validateResources() с правилами [0..10000] для cpu/io, [0..100] для cpu_quota_pct, [>0] для mem, [0..1000000] для pids
+- Slice path: `/sys/fs/cgroup/etronium/<lord_id>/<process_id>/` (fallback к user-slice если root недоступен)
 
 **Definition of done:**
 ```bash
 $ ./bin/etronium process spawn --exec=/bin/stress --arg=--cpu --arg=2 --resources=mem_limit_mb=100
 # через 30 сек процесс убит OOM на lord'е, exit_signal=9 (SIGKILL от OOM killer)
 ```
+
+**Тестовая среда:** e2e_phase1.sh в privileged Docker с cgroupns=private.
+На этом Docker-хосте **cgroup delegation заблокирована** (apparmor/seccomp не даёт
+включать `+cpu +memory +io +pids` в subtree_control даже root'у). Код толерантен —
+проверяет что файл существует, логирует warning, продолжает. На production хосте
+с systemd user.slice делегация работает.
 
 ---
 

@@ -1,0 +1,7 @@
+FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y --no-install-recommends bash coreutils ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY bin/scheduler /usr/local/bin/scheduler
+COPY bin/lord /usr/local/bin/lord
+COPY bin/etronium /usr/local/bin/etronium
+WORKDIR /root
+CMD ["bash"]

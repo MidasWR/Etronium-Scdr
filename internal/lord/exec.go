@@ -3,7 +3,7 @@
 // Fork/exec процессов с I/O capture.
 //
 // Phase 0: os/exec без cgroups, без namespaces, без лимитов.
-// Phase 1: добавим cgroup attach + limits.
+// Phase 1: cgroup v2 slice per process + cpu.weight/memory.max/io.weight/pids.max limits.
 package lord
 
 import (
@@ -64,6 +64,28 @@ func (a *Agent) handleSpawn(ctx context.Context, req *etroniumv1.SpawnRequest) e
 	if err := cmd.Start(); err != nil {
 		a.sendProcessExit(processID, -1, 0, 0, 0)
 		return fmt.Errorf("start: %w", err)
+	}
+
+	// cgroup attach (Phase 1) — перемещаем PID в slice, применяем ResourceSpec.
+	a.cgMu.Lock()
+	cg := a.cg
+	a.cgMu.Unlock()
+	if cg != nil {
+		resources := protoResourcesToLord(req.GetResources())
+		slice, err := cg.CreateProcessSlice(processID, resources)
+		if err != nil {
+			a.logger.Warn("cgroup create failed, continuing without limits",
+				"process_id", processID, "err", err,
+			)
+		} else if err := cg.Attach(processID, cmd.Process.Pid); err != nil {
+			a.logger.Warn("cgroup attach failed",
+				"process_id", processID, "pid", cmd.Process.Pid, "err", err,
+			)
+		} else {
+			a.logger.Info("cgroup attached",
+				"process_id", processID, "pid", cmd.Process.Pid, "slice", slice,
+			)
+		}
 	}
 
 	// Регистрируем процесс
@@ -135,8 +157,21 @@ func (a *Agent) handleSpawn(ctx context.Context, req *etroniumv1.SpawnRequest) e
 			"exit_signal", exitSignal,
 			"duration_ms", duration.Milliseconds(),
 		)
-		// В Phase 0 cpu_usage_usec/mem_peak_bytes не считаем
-		a.sendProcessExit(processID, exitCode, exitSignal, 0, 0)
+
+		// Читаем cgroup stats перед Destroy (Phase 1).
+		var cpuUsec, memPeak int64
+		if cg != nil {
+			stats, err := cg.ReadStats(processID)
+			if err == nil {
+				cpuUsec = int64(stats.CPUUsageUSec)
+				memPeak = int64(stats.MemoryPeak)
+			}
+			if err := cg.Destroy(processID); err != nil {
+				a.logger.Warn("cgroup destroy failed", "process_id", processID, "err", err)
+			}
+		}
+
+		a.sendProcessExit(processID, exitCode, exitSignal, cpuUsec, memPeak)
 		a.procsMu.Lock()
 		delete(a.procs, processID)
 		a.procsMu.Unlock()
@@ -232,4 +267,22 @@ func buildEnv(env map[string]string) []string {
 	return out
 }
 
-// stub для log/slog чтобы не падал билд
+// protoResourcesToLord — конвертация etroniumv1.ResourceSpec → lord.Resources.
+func protoResourcesToLord(r *etroniumv1.ResourceSpec) *Resources {
+	if r == nil {
+		return nil
+	}
+	return &Resources{
+		CPUShares:     uint32(max32(r.CpuShares, 0)),
+		MemLimitBytes: r.MemLimitBytes,
+		IOWeight:      uint32(max32(r.IoWeight, 0)),
+		PidsLimit:     uint32(max32(r.PidsLimit, 0)),
+	}
+}
+
+func max32(a, b int32) int32 {
+	if a > b {
+		return a
+	}
+	return b
+}
