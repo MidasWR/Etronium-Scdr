@@ -71,6 +71,17 @@ func (r *LordRegistry) UpdateStats(lordID string, cpuUsedPct int32, memUsedBytes
 	return true
 }
 
+// Get — получить Lord info по lord_id.
+func (r *LordRegistry) Get(lordID string) (*etroniumv1.Lord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.byID[lordID]
+	if !ok {
+		return nil, false
+	}
+	return e.Info, true
+}
+
 // MarkUnhealthy — пометить как нездорового (heartbeat timeout).
 func (r *LordRegistry) MarkUnhealthy(lordID string) {
 	r.mu.Lock()
@@ -152,6 +163,32 @@ func (r *LordRegistry) Pick(preferLordID string) *etroniumv1.Lord {
 		}
 	}
 	return nil
+}
+
+// PickDifferent — как Pick, но исключает excludeLordID (используется для migration target).
+func (r *LordRegistry) PickDifferent(excludeLordID string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var best *etroniumv1.Lord
+	var bestScore float64 = -1
+	for _, e := range r.byID {
+		if !e.Healthy || e.DrainRequested {
+			continue
+		}
+		if e.Info.GetLordId() == excludeLordID {
+			continue
+		}
+		score := scoreLord(e.Info)
+		if score > bestScore {
+			bestScore = score
+			best = e.Info
+		}
+	}
+	if best == nil {
+		return ""
+	}
+	return best.GetLordId()
 }
 
 // hasCapacity — лорд имеет хоть сколько-то ресурсов (в advertised терминах).

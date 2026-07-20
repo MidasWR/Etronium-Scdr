@@ -48,6 +48,15 @@ func main() {
 		"hostname", cfg.Hostname,
 	)
 
+	// CRIU detection (Phase 3)
+	criuProbe := lord.NewCriuOps(logger)
+	if criuProbe.Available() {
+		cfg.CriuAvailable = true
+		logger.Info("criu detected, migration supported", "version", criuProbe.Version())
+	} else {
+		logger.Warn("criu not available, migration disabled (Phase 3 will no-op)")
+	}
+
 	// Graceful shutdown
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

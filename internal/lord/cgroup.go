@@ -116,6 +116,28 @@ func (m *CgroupManager) Attach(processID string, pid int) error {
 	return nil
 }
 
+// AttachPidToSlice — перемещает pid в произвольный slice path.
+// Используется после CRIU restore, когда процесс уже не в нашей slice.
+func (m *CgroupManager) AttachPidToSlice(pid int, slicePath string) error {
+	procsFile := filepath.Join(slicePath, "cgroup.procs")
+	pidStr := strconv.Itoa(pid)
+	if err := os.WriteFile(procsFile, []byte(pidStr+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", procsFile, err)
+	}
+	return nil
+}
+
+// MovePidToRoot — выводит pid из любой cgroup в корневую slice.
+// Используется перед CRIU dump, чтобы dump видел процесс без slice-dependency.
+func (m *CgroupManager) MovePidToRoot(pid int) error {
+	rootProcs := filepath.Join(cgroupRoot, "cgroup.procs")
+	pidStr := strconv.Itoa(pid)
+	if err := os.WriteFile(rootProcs, []byte(pidStr+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write root cgroup.procs: %w", err)
+	}
+	return nil
+}
+
 // Destroy удаляет slice процесса. Сначала убивает процессы внутри (если есть).
 func (m *CgroupManager) Destroy(processID string) error {
 	slice := filepath.Join(m.basePath, processID)

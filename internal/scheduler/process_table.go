@@ -164,6 +164,16 @@ func (e *ProcessEntry) UpdateResult(exitCode, exitSignal int32) {
 	e.mu.Unlock()
 }
 
+// StateString — для логов.
+func (e *ProcessEntry) StateString() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.Info == nil {
+		return "?"
+	}
+	return e.Info.GetState().String()
+}
+
 // Snapshot — возвращает копию Info для внешних читателей.
 func (e *ProcessEntry) Snapshot() *etroniumv1.ProcessInfo {
 	e.mu.Lock()

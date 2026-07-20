@@ -1,0 +1,19 @@
+FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash coreutils ca-certificates iproute2 \
+      libprotobuf-c1 libnl-3-200 libnet1 libcap2 libaio1 uuid-runtime \
+      && rm -rf /var/lib/apt/lists/*
+
+# CRIU 4.2 собран вручную в test/Dockerfile.criu-builder.
+# ВАЖНО: criu 3.16 (Ubuntu 22.04 repo) НЕ работает на kernel 6.17 (vDSO compat issue).
+# Используем собранный 4.2.
+COPY test/bin/criu /usr/local/bin/criu
+
+# Verify CRIU works
+RUN criu --version && criu check 2>&1 | tail -3
+
+COPY bin/scheduler /usr/local/bin/scheduler
+COPY bin/lord /usr/local/bin/lord
+COPY bin/etronium /usr/local/bin/etronium
+WORKDIR /root
+CMD ["bash"]

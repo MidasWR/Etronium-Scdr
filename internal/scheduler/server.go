@@ -36,6 +36,10 @@ type Server struct {
 	lordSessionsMu sync.RWMutex
 	lordSessions   map[string]*lordSession
 	logger         *slog.Logger
+
+	// Checkpoint wait registry (Phase 3): keyed by (lord_id, process_id).
+	cpWaitsMu sync.Mutex
+	cpWaits   map[checkpointWaitKey]chan *etroniumv1.CheckpointResponse
 }
 
 // NewServer — конструктор.
@@ -45,6 +49,7 @@ func NewServer(cfg *Config, processes *ProcessTable, lords *LordRegistry, logger
 		processes:    processes,
 		lords:        lords,
 		lordSessions: make(map[string]*lordSession),
+		cpWaits:      make(map[checkpointWaitKey]chan *etroniumv1.CheckpointResponse),
 		logger:       logger,
 	}
 }
@@ -101,6 +106,7 @@ func (s *Server) Spawn(ctx context.Context, req *etroniumv1.SpawnRequest) (*etro
 		ExecPath:   req.ExecPath,
 		Argv:       append([]string{}, req.Argv...),
 		Env:        copyMap(req.Env),
+		WorkingDir: req.WorkingDir,
 		State:      etroniumv1.ProcessState_PROCESS_STATE_READY,
 		StateChangedAt: nowTimestamp(),
 		Resources:  req.Resources,
@@ -237,10 +243,7 @@ func (s *Server) ListProcesses(ctx context.Context, req *etroniumv1.ListProcesse
 	return &etroniumv1.ListProcessesResponse{Processes: out}, nil
 }
 
-// Migrate — Phase 0: not implemented.
-func (s *Server) Migrate(ctx context.Context, req *etroniumv1.MigrateRequest) (*etroniumv1.MigrateResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "migrate not yet implemented (Phase 3)")
-}
+// Migrate — реализовано в migrate.go (Phase 3).
 
 // ListLords — дамп всех лордов.
 func (s *Server) ListLords(ctx context.Context, req *etroniumv1.ListLordsRequest) (*etroniumv1.ListLordsResponse, error) {

@@ -635,6 +635,14 @@
         "sizeBytes": {
           "type": "string",
           "format": "int64"
+        },
+        "errorMessage": {
+          "type": "string",
+          "title": "если ok=false"
+        },
+        "processId": {
+          "type": "string",
+          "title": "какой процесс был checkpoint'нут"
         }
       }
     },
@@ -987,9 +995,25 @@
         "memPeakBytes": {
           "type": "string",
           "format": "int64"
+        },
+        "reason": {
+          "$ref": "#/definitions/v1ProcessExitReason",
+          "description": "Причина завершения. Phase 3: MIGRATED = процесс уехал на другой lord."
         }
       },
       "description": "ProcessExit — lord сообщает что процесс завершился."
+    },
+    "v1ProcessExitReason": {
+      "type": "string",
+      "enum": [
+        "PROCESS_EXIT_REASON_UNSPECIFIED",
+        "PROCESS_EXIT_REASON_NORMAL",
+        "PROCESS_EXIT_REASON_KILLED",
+        "PROCESS_EXIT_REASON_MIGRATED",
+        "PROCESS_EXIT_REASON_CRASHED"
+      ],
+      "default": "PROCESS_EXIT_REASON_UNSPECIFIED",
+      "title": "- PROCESS_EXIT_REASON_NORMAL: exec returned normally\n - PROCESS_EXIT_REASON_KILLED: tenant вызвал Kill\n - PROCESS_EXIT_REASON_MIGRATED: процесс переехал на другой lord (CRIU)\n - PROCESS_EXIT_REASON_CRASHED: exited с non-zero code без Kill"
     },
     "v1ProcessInfo": {
       "type": "object",
@@ -1022,6 +1046,10 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "workingDir": {
+          "type": "string",
+          "title": "cwd процесса"
         },
         "state": {
           "$ref": "#/definitions/v1ProcessState",
@@ -1314,6 +1342,12 @@
         "localPid": {
           "type": "integer",
           "format": "int32"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "errorMessage": {
+          "type": "string"
         }
       }
     },

@@ -184,6 +184,15 @@ func (sess *lordSession) recvLoop(s *Server) error {
 			s.handleIo(sess, c.Io)
 		case *etroniumv1.LordCmd_ProcessExit:
 			s.handleProcessExit(sess, c.ProcessExit)
+		case *etroniumv1.LordCmd_CheckpointResponse:
+			s.deliverCheckpointResponse(sess.lordID, c.CheckpointResponse)
+		case *etroniumv1.LordCmd_RestoreResponse:
+			s.logger.Info("restore response received",
+				"lord_id", sess.lordID,
+				"process_id", c.RestoreResponse.GetProcessId(),
+				"local_pid", c.RestoreResponse.GetLocalPid(),
+				"ok", c.RestoreResponse.GetOk(),
+			)
 		case *etroniumv1.LordCmd_LazyDeath:
 			s.lords.SetDrain(sess.lordID)
 			sess.outbox <- &etroniumv1.LordEvent{

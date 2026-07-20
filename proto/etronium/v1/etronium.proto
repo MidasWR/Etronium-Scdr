@@ -143,6 +143,7 @@ message ProcessInfo {
   string exec_path = 4;          // бинарник
   repeated string argv = 5;      // аргументы
   map<string, string> env = 6;
+  string working_dir = 17;      // cwd процесса
   // current state
   ProcessState state = 7;
   google.protobuf.Timestamp state_changed_at = 8;
@@ -697,6 +698,8 @@ message CheckpointResponse {
   bool ok = 1;
   string checkpoint_path = 2;  // путь к dump'у на lord'е
   int64 size_bytes = 3;
+  string error_message = 4;    // если ok=false
+  string process_id = 5;       // какой процесс был checkpoint'нут
 }
 
 message RestoreRequest {
@@ -714,6 +717,8 @@ message RestoreRequest {
 message RestoreResponse {
   bool ok = 1;
   int32 local_pid = 2;
+  string process_id = 3;
+  string error_message = 4;
 }
 
 // LordCmd — то что lord шлёт scheduler'у в Connect stream.
@@ -725,6 +730,8 @@ message LordCmd {
     ProcessIo io = 4;                   // stdout/stderr от запущенного процесса
     ProcessExit process_exit = 5;       // процесс завершился (exit_code + signal)
     AcknowledgeLazyDeathRequest lazy_death = 6;
+    CheckpointResponse checkpoint_response = 7; // ответ на LordEvent.Checkpoint (Phase 3)
+    RestoreResponse restore_response = 8;       // ответ на LordEvent.Restore (Phase 3)
   }
 }
 
@@ -762,6 +769,16 @@ message ProcessExit {
   int32  exit_signal = 3;     // 0 если normal exit
   int64  cpu_usage_usec = 4;
   int64  mem_peak_bytes = 5;
+  // Причина завершения. Phase 3: MIGRATED = процесс уехал на другой lord.
+  ProcessExitReason reason = 6;
+}
+
+enum ProcessExitReason {
+  PROCESS_EXIT_REASON_UNSPECIFIED = 0;
+  PROCESS_EXIT_REASON_NORMAL = 1;     // exec returned normally
+  PROCESS_EXIT_REASON_KILLED = 2;     // tenant вызвал Kill
+  PROCESS_EXIT_REASON_MIGRATED = 3;   // процесс переехал на другой lord (CRIU)
+  PROCESS_EXIT_REASON_CRASHED = 4;    // exited с non-zero code без Kill
 }
 
 message AcknowledgeLazyDeathRequest {

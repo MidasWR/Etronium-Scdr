@@ -62,6 +62,49 @@ func processCmd() *cobra.Command {
 	c.AddCommand(getCmd())
 	c.AddCommand(killCmd())
 	c.AddCommand(waitCmd())
+	c.AddCommand(migrateCmd())
+	return c
+}
+
+func migrateCmd() *cobra.Command {
+	var (
+		toLord string
+		auto   bool
+		reason string
+	)
+	c := &cobra.Command{
+		Use:   "migrate <process_id>",
+		Short: "Migrate process to another lord (CRIU checkpoint+restore)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !auto && toLord == "" {
+				return fmt.Errorf("either --to=<lord_id> or --auto required")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+			client, conn, err := dial(ctx)
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+			resp, err := client.Migrate(ctx, &etroniumv1.MigrateRequest{
+				ProcessId:    args[0],
+				TargetLordId: toLord,
+				Auto:         auto,
+				Reason:       reason,
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("acknowledged=%v state=%s new_lord=%s new_local_pid=%d\n",
+				resp.Acknowledged, resp.CurrentState.String(),
+				resp.NewLordId, resp.NewLocalPid)
+			return nil
+		},
+	}
+	c.Flags().StringVar(&toLord, "to", "", "target lord_id (mutually exclusive with --auto)")
+	c.Flags().BoolVar(&auto, "auto", false, "scheduler picks best lord")
+	c.Flags().StringVar(&reason, "reason", "manual", "human-readable migration reason (logged)")
 	return c
 }
 
