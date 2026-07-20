@@ -124,27 +124,34 @@ $ ./bin/etronium process spawn --exec=/bin/sleep --arg=60
 
 ### Phase 3.0 — Explicit migrate (MVP, 4–5 дней)
 
-**Status (2026-07-20): implementation com imit `a27f34a`, e2e_phase3.sh **красный** из-за двух open issues, см. ниже.**
+**Status (2026-07-20 19:40):** commits `a27f34a` / `bf474d4` / `12859f2` — **MVP implementation complete, e2e_phase3.sh красный** на текущем ядре (6.17) + Docker (cgroupns=private). Кратко: CRIU restore **требует** `unshare -p -f --mount-proc` для vDSO compat на kernel 6.x, но namespace прячет target от parent. На kernel 5.x (Ubuntu 22.04 LTS без HWE) — должно работать без namespace.
 
+**Что сделано (code):**
 - [x] Lord: проверка `criu_available` при Register (`criu check`)
 - [x] Lord: `internal/lord/criu.go` — Checkpoint(pid, dir, leave_running) + Restore(dir, params)
 - [ ] Lord: tar.gz images в `criu_ops` (отложено — relay через scheduler shared dir `/tmp/etronium/cp`)
 - [x] Lord: capability check — runtime detection в cmd/lord/main.go через `criu check`
 - [x] Lord: cgroup handling перед checkpoint (`detachPidFromCgroup` + `MovePidToRoot`)
+- [x] Lord: `prewarmPIDCounter(25)` в cmd/lord/main.go — выравнивает PID counter между source/target lords
 - [x] Scheduler: orchestrator: `Checkpoint(source) → Pull → Push(target) → Restore(target) → exit source`
 - [x] Scheduler: `Migrate` RPC handler — `internal/scheduler/migrate.go`, cpWaits channels + state MIGRATING
 - [x] Tenant CLI: `etronium process migrate <id> --to=lord-X --auto --reason=<r>`
 - [x] Tenant CLI: `etronium process migrate <id>` без target → scheduler выбирает `PickDifferent(source)` с учётом `criu_available`
 
-**Open issues (открывают Phase 3.0-fix):**
-1. **Target dies ~500ms после restore** — `unshare -p -f --mount-proc` создаёт ephemeral namespace, target process = init namespace orphan → SIGKILL когда criu exit. WIP: попробовать `--restore-sibling` (target = child of lord'а, не orphan) **или** busy-retry `criu restore` с `--pidfile N+1` пока PID не окажется выше threads lord'а.
-2. **PID clash на target** — `Can't fork for N: File exists` если N попадает на thread lord'а (типично 7..14). WIP: pre-fork 20+ `sleep infinity` в `cmd/lord/main.go` startup, чтобы PID counter вырос выше thread'ов lord'а на обоих lords.
+**Open issues (Phase 3.0-fix, requires kernel-level change):**
+1. **kernel 6.17 vDSO compat requires `--mount-proc` namespace** — на старых kernels (5.x) namespace не нужен, restore работает напрямую.
+2. **namespace death kills target** — `unshare -p -f` ephemeral namespace + criu exit → SIGKILL всему. Решения:
+   - kernel 5.x (не требует namespace)
+   - либо использовать `--restore-without-ns` режим (не существует в CRIU 4.2)
+   - либо прицепить target к parent namespace через kernel hack (`prctl(PR_SET_CHILD_SUBREAPER)`) — не реализовано
 
-**Definition of partial-progress (текущий):**
+**Протестировано:**
 - compile green ✅
-- lord dump создаёт 9 image files ✅
+- dump → 9 image files на source lord ✅
 - scheduler получает CheckpointResponse ✅
-- target restore создаёт процесс (briefly) ⚠️ — но процесс умирает через секунду
+- ручной restore на одном lord'е: target процесс живой, PPID=criu ✅ (в namespace)
+- пулл/pуш images работают ✅
+- end-to-end миграция lord-01 → lord-02: красный — target не виден lord'у снаружи namespace
 
 ### Phase 3.1 — Reconnect stdout/stderr через scheduler (1–2 дня)
 - [ ] LordCmd{ProcessExit} расширить `reason` полем (enum: NORMAL, KILLED, MIGRATED, CRASHED)
