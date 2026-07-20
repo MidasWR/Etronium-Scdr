@@ -1,17 +1,19 @@
-# Runtime image for Etronium lords. Multi-purpose: scheduler can also
-# be run inside this image (useful for single-host demos).
+# Runtime image for Etronium — multi-purpose.
+# Used by both lords (via `lord` command) and chaos testbed.
 FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      bash coreutils ca-certificates iproute2 \
+      bash coreutils ca-certificates iproute2 iptables wget \
       libcap2 \
       && rm -rf /var/lib/apt/lists/*
 
 # Binaries built on the host.
-COPY bin/scheduler /usr/local/bin/scheduler
-COPY bin/lord      /usr/local/bin/lord
-COPY bin/etronium  /usr/local/bin/etronium
-# V5 example application (state serialization demo).
+COPY bin/scheduler      /usr/local/bin/scheduler
+COPY bin/lord           /usr/local/bin/lord
+COPY bin/etronium       /usr/local/bin/etronium
 COPY bin/example-stateful /usr/local/bin/example-stateful
+COPY bin/oom-loop       /usr/local/bin/oom-loop
+COPY bin/zombie-fork    /usr/local/bin/zombie-fork
+COPY bin/chaos-runner   /usr/local/bin/chaos-runner
 
 WORKDIR /root
 CMD ["bash"]
