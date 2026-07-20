@@ -11,7 +11,7 @@
 // Из stream читает:
 //   • Spawn (запустить процесс)
 //   • Kill (послать сигнал)
-//   • Checkpoint/Restore (Phase 3)
+//   • LazyDeathAck (graceful shutdown)
 //   • FilePush (Phase 4)
 package lord
 
@@ -62,9 +62,6 @@ type Agent struct {
 	cpuStatsMu  sync.Mutex
 	lastCpuUsec uint64
 	lastSampleAt time.Time
-
-	// CRIU ops (Phase 3)
-	criu *CriuOps
 }
 
 // localProcess — запись о процессе который lord запустил.
@@ -99,7 +96,6 @@ func NewAgent(cfg *Config, logger *slog.Logger) *Agent {
 		outbox:         make(chan *etroniumv1.LordCmd, 128),
 		shutdownCtx:    ctx,
 		shutdownCancel: cancel,
-		criu:           NewCriuOps(logger),
 	}
 }
 
@@ -276,10 +272,6 @@ func (a *Agent) handleEvent(ctx context.Context, ev *etroniumv1.LordEvent) error
 	case *etroniumv1.LordEvent_LazyDeathAck:
 		a.logger.Info("lazy death ack received")
 		return errors.New("lazy death requested")
-	case *etroniumv1.LordEvent_Checkpoint:
-		return a.handleCheckpoint(ctx, e)
-	case *etroniumv1.LordEvent_Restore:
-		return a.handleRestore(ctx, e)
 	case *etroniumv1.LordEvent_FilePush:
 		a.logger.Warn("file push not implemented in Phase 0")
 	default:

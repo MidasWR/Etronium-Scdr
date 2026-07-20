@@ -12,7 +12,6 @@ type Config struct {
 	SchedulerAddr      string // scheduler gRPC endpoint, default "localhost:50051"
 	Hostname           string // опционально, иначе os.Hostname()
 	HeartbeatSec       int    // интервал heartbeat, default 10
-	CriuAvailable      bool   // поддерживает ли CRIU (для Register)
 	LogLevel           string
 	AdvertisedCpuShares int32 // NUMA-overcommit, 0 = equals cpu_cores_physical * 100
 	AdvertisedMemBytes  int64 // NUMA-overcommit, 0 = equals mem_total_bytes_physical
@@ -26,7 +25,6 @@ func LoadConfig() (*Config, error) {
 		Hostname:      getEnv("LORD_HOSTNAME", hostname),
 		HeartbeatSec:  10,
 		LogLevel:      getEnv("LORD_LOG_LEVEL", "info"),
-		CriuAvailable: false, // TODO: проверить что criu есть в PATH
 	}
 	if v := os.Getenv("LORD_HEARTBEAT_SEC"); v != "" {
 		var n int

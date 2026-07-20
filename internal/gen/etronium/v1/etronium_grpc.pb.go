@@ -645,8 +645,6 @@ const (
 	LordService_StatsRemote_FullMethodName          = "/etronium.v1.LordService/StatsRemote"
 	LordService_FilePull_FullMethodName             = "/etronium.v1.LordService/FilePull"
 	LordService_FilePush_FullMethodName             = "/etronium.v1.LordService/FilePush"
-	LordService_Checkpoint_FullMethodName           = "/etronium.v1.LordService/Checkpoint"
-	LordService_Restore_FullMethodName              = "/etronium.v1.LordService/Restore"
 	LordService_AcknowledgeLazyDeath_FullMethodName = "/etronium.v1.LordService/AcknowledgeLazyDeath"
 )
 
@@ -677,9 +675,6 @@ type LordServiceClient interface {
 	// FilePull / FilePush — для тенантских файлов.
 	FilePull(ctx context.Context, in *FilePullRequest, opts ...grpc.CallOption) (*FilePullResponse, error)
 	FilePush(ctx context.Context, in *FilePushRequest, opts ...grpc.CallOption) (*FilePushResponse, error)
-	// CRIU dump/restore — для миграции.
-	Checkpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*CheckpointResponse, error)
-	Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*RestoreResponse, error)
 	// LazyDeath — лорд объявляет о плановом завершении.
 	AcknowledgeLazyDeath(ctx context.Context, in *AcknowledgeLazyDeathRequest, opts ...grpc.CallOption) (*AcknowledgeLazyDeathResponse, error)
 }
@@ -784,26 +779,6 @@ func (c *lordServiceClient) FilePush(ctx context.Context, in *FilePushRequest, o
 	return out, nil
 }
 
-func (c *lordServiceClient) Checkpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*CheckpointResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CheckpointResponse)
-	err := c.cc.Invoke(ctx, LordService_Checkpoint_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *lordServiceClient) Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (*RestoreResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(RestoreResponse)
-	err := c.cc.Invoke(ctx, LordService_Restore_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *lordServiceClient) AcknowledgeLazyDeath(ctx context.Context, in *AcknowledgeLazyDeathRequest, opts ...grpc.CallOption) (*AcknowledgeLazyDeathResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AcknowledgeLazyDeathResponse)
@@ -841,9 +816,6 @@ type LordServiceServer interface {
 	// FilePull / FilePush — для тенантских файлов.
 	FilePull(context.Context, *FilePullRequest) (*FilePullResponse, error)
 	FilePush(context.Context, *FilePushRequest) (*FilePushResponse, error)
-	// CRIU dump/restore — для миграции.
-	Checkpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error)
-	Restore(context.Context, *RestoreRequest) (*RestoreResponse, error)
 	// LazyDeath — лорд объявляет о плановом завершении.
 	AcknowledgeLazyDeath(context.Context, *AcknowledgeLazyDeathRequest) (*AcknowledgeLazyDeathResponse, error)
 	mustEmbedUnimplementedLordServiceServer()
@@ -879,12 +851,6 @@ func (UnimplementedLordServiceServer) FilePull(context.Context, *FilePullRequest
 }
 func (UnimplementedLordServiceServer) FilePush(context.Context, *FilePushRequest) (*FilePushResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FilePush not implemented")
-}
-func (UnimplementedLordServiceServer) Checkpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Checkpoint not implemented")
-}
-func (UnimplementedLordServiceServer) Restore(context.Context, *RestoreRequest) (*RestoreResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Restore not implemented")
 }
 func (UnimplementedLordServiceServer) AcknowledgeLazyDeath(context.Context, *AcknowledgeLazyDeathRequest) (*AcknowledgeLazyDeathResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcknowledgeLazyDeath not implemented")
@@ -1036,42 +1002,6 @@ func _LordService_FilePush_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
-func _LordService_Checkpoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CheckpointRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(LordServiceServer).Checkpoint(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: LordService_Checkpoint_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LordServiceServer).Checkpoint(ctx, req.(*CheckpointRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _LordService_Restore_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RestoreRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(LordServiceServer).Restore(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: LordService_Restore_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LordServiceServer).Restore(ctx, req.(*RestoreRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _LordService_AcknowledgeLazyDeath_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AcknowledgeLazyDeathRequest)
 	if err := dec(in); err != nil {
@@ -1120,14 +1050,6 @@ var LordService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FilePush",
 			Handler:    _LordService_FilePush_Handler,
-		},
-		{
-			MethodName: "Checkpoint",
-			Handler:    _LordService_Checkpoint_Handler,
-		},
-		{
-			MethodName: "Restore",
-			Handler:    _LordService_Restore_Handler,
 		},
 		{
 			MethodName: "AcknowledgeLazyDeath",

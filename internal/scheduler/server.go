@@ -36,10 +36,6 @@ type Server struct {
 	lordSessionsMu sync.RWMutex
 	lordSessions   map[string]*lordSession
 	logger         *slog.Logger
-
-	// Checkpoint wait registry (Phase 3): keyed by (lord_id, process_id).
-	cpWaitsMu sync.Mutex
-	cpWaits   map[checkpointWaitKey]chan *etroniumv1.CheckpointResponse
 }
 
 // NewServer — конструктор.
@@ -49,7 +45,6 @@ func NewServer(cfg *Config, processes *ProcessTable, lords *LordRegistry, logger
 		processes:    processes,
 		lords:        lords,
 		lordSessions: make(map[string]*lordSession),
-		cpWaits:      make(map[checkpointWaitKey]chan *etroniumv1.CheckpointResponse),
 		logger:       logger,
 	}
 }
@@ -142,7 +137,8 @@ func (s *Server) Spawn(ctx context.Context, req *etroniumv1.SpawnRequest) (*etro
 		Resources:         req.Resources,
 		WorkingDir:        req.WorkingDir,
 		StdinInitial:      req.StdinInitial,
-		CriuCheckpointable: req.CriuCheckpointable,
+		StateDumpPathHint: req.GetStateDumpPathHint(),
+		MaxRestarts:       req.GetMaxRestarts(),
 	}
 
 	if err := s.SendSpawn(lord.LordId, spawnReq); err != nil {

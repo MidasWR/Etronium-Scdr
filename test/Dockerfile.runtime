@@ -1,0 +1,17 @@
+# Runtime image for Etronium lords. Multi-purpose: scheduler can also
+# be run inside this image (useful for single-host demos).
+FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash coreutils ca-certificates iproute2 \
+      libcap2 \
+      && rm -rf /var/lib/apt/lists/*
+
+# Binaries built on the host.
+COPY bin/scheduler /usr/local/bin/scheduler
+COPY bin/lord      /usr/local/bin/lord
+COPY bin/etronium  /usr/local/bin/etronium
+# V5 example application (state serialization demo).
+COPY bin/example-stateful /usr/local/bin/example-stateful
+
+WORKDIR /root
+CMD ["bash"]

@@ -134,8 +134,6 @@ message Lord {
   bool healthy = 10;
   double reputation = 11;  // 0.0..1.0
   google.protobuf.Timestamp last_seen = 12;
-  // Поддержка CRIU для миграции.
-  bool criu_available = 13;
 }
 
 // Snapshot процесса — выдаётся через GetProcess/ListProcesses.
@@ -399,7 +397,6 @@ message SpawnRequest {
   string working_dir = 6;     // cwd внутри lord'а, default "/"
   // Опциональные hints для placement. Если пусто — scheduler сам.
   string prefer_lord_id = 7;  // soft-affinity
-  bool criu_checkpointable = 8;  // подсказка lord'у что процесс готов к миграции
   // Initial stdin (если есть что-то ввести сразу при старте).
   bytes stdin_initial = 9;
   string process_id = 10;  // глобальный ID, присваивается scheduler'ом
@@ -598,20 +595,9 @@ service LordService {
     };
   }
 
-  // CRIU dump/restore — для миграции.
-  rpc Checkpoint(CheckpointRequest) returns (CheckpointResponse) {
-    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "CRIU dump process"
-      tags: "lord"
-    };
-  }
-
-  rpc Restore(RestoreRequest) returns (RestoreResponse) {
-    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "CRIU restore process"
-      tags: "lord"
-    };
-  }
+  // Live migration (CRIU) was abandoned in Phase 3.4 in favour of
+  // respawn-on-lord-disconnect (see internal/scheduler/recovery.go).
+  // See docs/DECISIONS.md ADR 028-029.
 
   // LazyDeath — лорд объявляет о плановом завершении.
   rpc AcknowledgeLazyDeath(AcknowledgeLazyDeathRequest) returns (AcknowledgeLazyDeathResponse) {
@@ -634,9 +620,7 @@ message RegisterRequest {
   string arch = 3;
   int32 cpu_cores_physical = 4;
   int64 mem_total_bytes_physical = 5;
-  bool criu_available = 6;       // поддерживает ли CRIU
-  string criu_version = 7;       // для информации
-  string auth_token = 8;         // pre-shared token
+  string auth_token = 6;         // pre-shared token
   // NUMA-overcommit (Phase 2). 0 = не задан (advertised == physical).
   int32 advertised_cpu_shares = 9;
   int64 advertised_mem_bytes = 10;
@@ -673,7 +657,6 @@ message ExecRemoteRequest {
   ResourceSpec resources = 6;
   string working_dir = 7;
   bytes stdin_initial = 8;
-  bool criu_checkpointable = 9;
 }
 
 message KillRemoteRequest {
@@ -712,38 +695,7 @@ message FilePushResponse {
   string sha256 = 2;
 }
 
-message CheckpointRequest {
-  string process_id = 1;
-  string checkpoint_dir = 2;  // куда lord положит dump
-  bool leave_running = 3;      // freeze и продолжать, или полностью остановить
-}
 
-message CheckpointResponse {
-  bool ok = 1;
-  string checkpoint_path = 2;  // путь к dump'у на lord'е
-  int64 size_bytes = 3;
-  string error_message = 4;    // если ok=false
-  string process_id = 5;       // какой процесс был checkpoint'нут
-}
-
-message RestoreRequest {
-  string process_id = 1;
-  string checkpoint_path = 2;
-  // Параметры restore: тот же exec_path/argv/env/resources что были,
-  // иначе процесс не восстановится корректно.
-  string exec_path = 3;
-  repeated string argv = 4;
-  map<string, string> env = 5;
-  ResourceSpec resources = 6;
-  string working_dir = 7;
-}
-
-message RestoreResponse {
-  bool ok = 1;
-  int32 local_pid = 2;
-  string process_id = 3;
-  string error_message = 4;
-}
 
 // LordCmd — то что lord шлёт scheduler'у в Connect stream.
 message LordCmd {
@@ -754,8 +706,6 @@ message LordCmd {
     ProcessIo io = 4;                   // stdout/stderr от запущенного процесса
     ProcessExit process_exit = 5;       // процесс завершился (exit_code + signal)
     AcknowledgeLazyDeathRequest lazy_death = 6;
-    CheckpointResponse checkpoint_response = 7; // ответ на LordEvent.Checkpoint (Phase 3)
-    RestoreResponse restore_response = 8;       // ответ на LordEvent.Restore (Phase 3)
   }
 }
 
@@ -779,8 +729,6 @@ message LordEvent {
     HeartbeatResponse heartbeat_ack = 2;
     SpawnRequest spawn = 3;             // запустить процесс
     KillRequest kill = 4;               // послать сигнал
-    CheckpointRequest checkpoint = 5;   // CRIU dump (Phase 3+)
-    RestoreRequest restore = 6;         // CRIU restore (Phase 3+)
     FilePushRequest file_push = 7;      // file transfer (Phase 4+)
     AcknowledgeLazyDeathResponse lazy_death_ack = 8;
   }
@@ -793,17 +741,8 @@ message ProcessExit {
   int32  exit_signal = 3;     // 0 если normal exit
   int64  cpu_usage_usec = 4;
   int64  mem_peak_bytes = 5;
-  // Причина завершения. Phase 3: MIGRATED = процесс уехал на другой lord.
-  ProcessExitReason reason = 6;
 }
 
-enum ProcessExitReason {
-  PROCESS_EXIT_REASON_UNSPECIFIED = 0;
-  PROCESS_EXIT_REASON_NORMAL = 1;     // exec returned normally
-  PROCESS_EXIT_REASON_KILLED = 2;     // tenant вызвал Kill
-  PROCESS_EXIT_REASON_MIGRATED = 3;   // процесс переехал на другой lord (CRIU)
-  PROCESS_EXIT_REASON_CRASHED = 4;    // exited с non-zero code без Kill
-}
 
 message AcknowledgeLazyDeathRequest {
   string lord_id = 1;

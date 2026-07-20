@@ -33,7 +33,6 @@ func detectHardware(cfg *Config) (*etroniumv1.RegisterRequest, error) {
 		MemTotalBytesPhysical: memBytes,
 		AdvertisedCpuShares:   cfg.AdvertisedCpuShares,
 		AdvertisedMemBytes:    cfg.AdvertisedMemBytes,
-		CriuAvailable:         cfg.CriuAvailable,
 	}, nil
 }
 

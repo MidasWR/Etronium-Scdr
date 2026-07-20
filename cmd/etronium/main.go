@@ -70,17 +70,18 @@ func migrateCmd() *cobra.Command {
 	var (
 		toLord string
 		auto   bool
-		reason string
 	)
 	c := &cobra.Command{
 		Use:   "migrate <process_id>",
-		Short: "Migrate process to another lord (CRIU checkpoint+restore)",
-		Args:  cobra.ExactArgs(1),
+		Short: "Re-spawn process on a different lord (fault-tolerant restart, NOT CRIU migration)",
+		Long: "Phase 3.4 fault-tolerance: process is re-launched on a different lord with the same exec/argv/env. " +
+			"State is recovered from $ETRONIUM_STATE_DUMP if the application opted in via V5 state serialization.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !auto && toLord == "" {
 				return fmt.Errorf("either --to=<lord_id> or --auto required")
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			client, conn, err := dial(ctx)
 			if err != nil {
@@ -91,7 +92,6 @@ func migrateCmd() *cobra.Command {
 				ProcessId:    args[0],
 				TargetLordId: toLord,
 				Auto:         auto,
-				Reason:       reason,
 			})
 			if err != nil {
 				return err
@@ -104,7 +104,6 @@ func migrateCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&toLord, "to", "", "target lord_id (mutually exclusive with --auto)")
 	c.Flags().BoolVar(&auto, "auto", false, "scheduler picks best lord")
-	c.Flags().StringVar(&reason, "reason", "manual", "human-readable migration reason (logged)")
 	return c
 }
 

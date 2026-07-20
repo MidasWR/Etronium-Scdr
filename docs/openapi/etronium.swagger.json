@@ -606,46 +606,6 @@
         }
       }
     },
-    "v1CheckpointRequest": {
-      "type": "object",
-      "properties": {
-        "processId": {
-          "type": "string"
-        },
-        "checkpointDir": {
-          "type": "string",
-          "title": "куда lord положит dump"
-        },
-        "leaveRunning": {
-          "type": "boolean",
-          "title": "freeze и продолжать, или полностью остановить"
-        }
-      }
-    },
-    "v1CheckpointResponse": {
-      "type": "object",
-      "properties": {
-        "ok": {
-          "type": "boolean"
-        },
-        "checkpointPath": {
-          "type": "string",
-          "title": "путь к dump'у на lord'е"
-        },
-        "sizeBytes": {
-          "type": "string",
-          "format": "int64"
-        },
-        "errorMessage": {
-          "type": "string",
-          "title": "если ok=false"
-        },
-        "processId": {
-          "type": "string",
-          "title": "какой процесс был checkpoint'нут"
-        }
-      }
-    },
     "v1FilePullResponse": {
       "type": "object",
       "properties": {
@@ -880,10 +840,6 @@
         "lastSeen": {
           "type": "string",
           "format": "date-time"
-        },
-        "criuAvailable": {
-          "type": "boolean",
-          "description": "Поддержка CRIU для миграции."
         }
       },
       "description": "Информация о лорде — \"ядре\" в NUMA-аналогии."
@@ -905,14 +861,6 @@
         "kill": {
           "$ref": "#/definitions/v1KillRequest",
           "title": "послать сигнал"
-        },
-        "checkpoint": {
-          "$ref": "#/definitions/v1CheckpointRequest",
-          "title": "CRIU dump (Phase 3+)"
-        },
-        "restore": {
-          "$ref": "#/definitions/v1RestoreRequest",
-          "title": "CRIU restore (Phase 3+)"
         },
         "filePush": {
           "$ref": "#/definitions/v1FilePushRequest",
@@ -995,25 +943,9 @@
         "memPeakBytes": {
           "type": "string",
           "format": "int64"
-        },
-        "reason": {
-          "$ref": "#/definitions/v1ProcessExitReason",
-          "description": "Причина завершения. Phase 3: MIGRATED = процесс уехал на другой lord."
         }
       },
       "description": "ProcessExit — lord сообщает что процесс завершился."
-    },
-    "v1ProcessExitReason": {
-      "type": "string",
-      "enum": [
-        "PROCESS_EXIT_REASON_UNSPECIFIED",
-        "PROCESS_EXIT_REASON_NORMAL",
-        "PROCESS_EXIT_REASON_KILLED",
-        "PROCESS_EXIT_REASON_MIGRATED",
-        "PROCESS_EXIT_REASON_CRASHED"
-      ],
-      "default": "PROCESS_EXIT_REASON_UNSPECIFIED",
-      "title": "- PROCESS_EXIT_REASON_NORMAL: exec returned normally\n - PROCESS_EXIT_REASON_KILLED: tenant вызвал Kill\n - PROCESS_EXIT_REASON_MIGRATED: процесс переехал на другой lord (CRIU)\n - PROCESS_EXIT_REASON_CRASHED: exited с non-zero code без Kill"
     },
     "v1ProcessInfo": {
       "type": "object",
@@ -1230,14 +1162,6 @@
           "type": "string",
           "format": "int64"
         },
-        "criuAvailable": {
-          "type": "boolean",
-          "title": "поддерживает ли CRIU"
-        },
-        "criuVersion": {
-          "type": "string",
-          "title": "для информации"
-        },
         "authToken": {
           "type": "string",
           "title": "pre-shared token"
@@ -1324,57 +1248,6 @@
         }
       }
     },
-    "v1RestoreRequest": {
-      "type": "object",
-      "properties": {
-        "processId": {
-          "type": "string"
-        },
-        "checkpointPath": {
-          "type": "string"
-        },
-        "execPath": {
-          "type": "string",
-          "description": "Параметры restore: тот же exec_path/argv/env/resources что были,\nиначе процесс не восстановится корректно."
-        },
-        "argv": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "env": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
-        "resources": {
-          "$ref": "#/definitions/v1ResourceSpec"
-        },
-        "workingDir": {
-          "type": "string"
-        }
-      }
-    },
-    "v1RestoreResponse": {
-      "type": "object",
-      "properties": {
-        "ok": {
-          "type": "boolean"
-        },
-        "localPid": {
-          "type": "integer",
-          "format": "int32"
-        },
-        "processId": {
-          "type": "string"
-        },
-        "errorMessage": {
-          "type": "string"
-        }
-      }
-    },
     "v1SpawnRequest": {
       "type": "object",
       "properties": {
@@ -1410,10 +1283,6 @@
         "preferLordId": {
           "type": "string",
           "description": "Опциональные hints для placement. Если пусто — scheduler сам.\n\nsoft-affinity"
-        },
-        "criuCheckpointable": {
-          "type": "boolean",
-          "title": "подсказка lord'у что процесс готов к миграции"
         },
         "stdinInitial": {
           "type": "string",
