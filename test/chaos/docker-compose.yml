@@ -45,6 +45,8 @@ services:
       - --log=info
     volumes:
       - etronium-state:/tmp/etronium
+    environment:
+      - LORD_HOSTNAME=etronium-lord-active-1
 
   lord-active-2:
     image: etronium-test:runtime
@@ -59,6 +61,8 @@ services:
       - --log=info
     volumes:
       - etronium-state:/tmp/etronium
+    environment:
+      - LORD_HOSTNAME=etronium-lord-active-2
 
   lord-active-3:
     image: etronium-test:runtime
@@ -73,6 +77,8 @@ services:
       - --log=info
     volumes:
       - etronium-state:/tmp/etronium
+    environment:
+      - LORD_HOSTNAME=etronium-lord-active-3
 
   # Queued lords — стартуют по запросу chaos-runner'а.
   lord-queued-4:
@@ -88,6 +94,8 @@ services:
       - --log=info
     volumes:
       - etronium-state:/tmp/etronium
+    environment:
+      - LORD_HOSTNAME=etronium-lord-queued-4
     profiles: ["queued"]
 
   lord-queued-5:
@@ -95,9 +103,16 @@ services:
     container_name: etronium-lord-queued-5
     network_mode: host
     privileged: true
-    command: ["sleep", "infinity"]
+    command:
+      - lord
+      - --scheduler=127.0.0.1:50051
+      - --advertise-cpu=3200
+      - --advertise-mem=4294967296
+      - --log=info
     volumes:
       - etronium-state:/tmp/etronium
+    environment:
+      - LORD_HOSTNAME=etronium-lord-queued-5
     profiles: ["queued"]
 
   lord-queued-6:
@@ -105,9 +120,16 @@ services:
     container_name: etronium-lord-queued-6
     network_mode: host
     privileged: true
-    command: ["sleep", "infinity"]
+    command:
+      - lord
+      - --scheduler=127.0.0.1:50051
+      - --advertise-cpu=3200
+      - --advertise-mem=4294967296
+      - --log=info
     volumes:
       - etronium-state:/tmp/etronium
+    environment:
+      - LORD_HOSTNAME=etronium-lord-queued-6
     profiles: ["queued"]
 
   tenant:

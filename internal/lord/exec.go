@@ -229,6 +229,11 @@ func (a *Agent) pumpStream(processID string, stream etroniumv1.IOChunk_Stream, r
 
 // handleKill — послать сигнал процессу.
 func (a *Agent) handleKill(req *etroniumv1.KillRequest) error {
+	a.logger.Warn("DEBUG: handleKill called",
+		"process_id", req.GetProcessId(),
+		"signal", req.GetSignalNumber(),
+		"force", req.GetForce(),
+	)
 	a.procsMu.RLock()
 	lp, ok := a.procs[req.ProcessId]
 	a.procsMu.RUnlock()

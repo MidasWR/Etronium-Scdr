@@ -48,7 +48,28 @@ func (s *Server) onLordDisconnect(deadLordID string) {
 
 // recoverFromLordDisconnect is a separate goroutine so the sender end of
 // the stream is not blocked on recovery time.
+//
+// Debounce: если recovery для этого dead_lord_id был недавно (<5s назад),
+// пропускаем. Это защищает от cascading recovery storm когда lord делает
+// multiple quick reconnects (auto-reconnect с backoff создаёт новые
+// lord_id каждый раз, recovery видит "новый disconnect" и пытается
+// respawn, что overload'ит target_lord).
 func (s *Server) recoverFromLordDisconnect(deadLordID string) {
+	const recoveryDebounce = 5 * time.Second
+
+	s.lastRecoveryMu.Lock()
+	last, ok := s.lastRecoveryAt[deadLordID]
+	s.lastRecoveryAt[deadLordID] = time.Now()
+	s.lastRecoveryMu.Unlock()
+
+	if ok && time.Since(last) < recoveryDebounce {
+		s.logger.Info("recovery: debounced (recent recovery for same dead_lord_id)",
+			"dead_lord_id", deadLordID,
+			"since_last", time.Since(last).String(),
+		)
+		return
+	}
+
 	candidates := s.processes.ListByLord(deadLordID, func(e *ProcessEntry) bool {
 		state := e.Info.GetState()
 		return state == etroniumv1.ProcessState_PROCESS_STATE_RUNNING ||
@@ -58,7 +79,7 @@ func (s *Server) recoverFromLordDisconnect(deadLordID string) {
 	})
 
 	if len(candidates) == 0 {
-		s.logger.Debug("recovery: no processes to respawn",
+		s.logger.Info("recovery: no processes to respawn (candidates=0)",
 			"dead_lord_id", deadLordID,
 		)
 		return

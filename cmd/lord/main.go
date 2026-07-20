@@ -31,9 +31,19 @@ func main() {
 
 	logger := newLogger(*logLevel, *logFormat)
 
+	// Hostname precedence: flag > env > os.Hostname().
+	// (Flag default "", поэтому если --hostname не указан — берём env или fallback.)
+	hostnameVal := *hostname
+	if hostnameVal == "" {
+		hostnameVal = envOr("LORD_HOSTNAME", "")
+	}
+	if hostnameVal == "" {
+		hostnameVal, _ = os.Hostname()
+	}
+
 	cfg := &lord.Config{
 		SchedulerAddr:       *schedulerAddr,
-		Hostname:            *hostname,
+		Hostname:            hostnameVal,
 		HeartbeatSec:        10,
 		LogLevel:            *logLevel,
 		AdvertisedCpuShares: int32(*advCPU),

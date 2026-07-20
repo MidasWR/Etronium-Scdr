@@ -103,6 +103,24 @@ func (r *LordRegistry) SetDrain(lordID string) {
 	}
 }
 
+// FindByHostname — найти lord_id по hostname. Используется для re-bind
+// при auto-reconnect: lord делает Register с тем же hostname
+// (etronium-lord-active-2), scheduler может перенести процессы от старого
+// session_id к новому.
+func (r *LordRegistry) FindByHostname(hostname string) string {
+	if hostname == "" {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for id, e := range r.byID {
+		if e.Info.GetHostname() == hostname {
+			return id
+		}
+	}
+	return ""
+}
+
 // ListAll — все лорды (для ListLords).
 func (r *LordRegistry) ListAll(onlyHealthy bool) []*etroniumv1.Lord {
 	r.mu.RLock()

@@ -13,6 +13,7 @@ import (
 	etroniumv1 "github.com/midas/Etronium-Scdr/internal/gen/etronium/v1"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -35,6 +36,12 @@ type Server struct {
 	lords          *LordRegistry
 	lordSessionsMu sync.RWMutex
 	lordSessions   map[string]*lordSession
+
+	// lastRecoveryAt[dead_lord_id] = последнее время recovery для этого
+	// disconnected lord'а. Используется для debounce в recovery.go чтобы
+	// избежать recovery storm при auto-reconnect cascade.
+	lastRecoveryMu sync.Mutex
+	lastRecoveryAt map[string]time.Time
 	logger         *slog.Logger
 }
 
@@ -45,6 +52,7 @@ func NewServer(cfg *Config, processes *ProcessTable, lords *LordRegistry, logger
 		processes:    processes,
 		lords:        lords,
 		lordSessions: make(map[string]*lordSession),
+		lastRecoveryAt: make(map[string]time.Time),
 		logger:       logger,
 	}
 }
@@ -194,6 +202,12 @@ func (s *Server) Spawn(ctx context.Context, req *etroniumv1.SpawnRequest) (*etro
 
 // Kill — послать сигнал процессу через lord'а.
 func (s *Server) Kill(ctx context.Context, req *etroniumv1.KillRequest) (*etroniumv1.KillResponse, error) {
+	// NB: для отладки — печатаем кто вызвал.
+	if peer, ok := peer.FromContext(ctx); ok {
+		s.logger.Info("Kill RPC", "process_id", req.ProcessId, "signal", req.SignalNumber, "force", req.Force, "peer", peer.Addr.String())
+	} else {
+		s.logger.Info("Kill RPC (no peer)", "process_id", req.ProcessId, "signal", req.SignalNumber, "force", req.Force)
+	}
 	entry, ok := s.processes.Get(req.ProcessId)
 	if !ok {
 		return nil, status.Errorf(codes.NotFound, "process %s not found", req.ProcessId)

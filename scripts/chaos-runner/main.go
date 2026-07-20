@@ -372,8 +372,8 @@ func S03LordLag(ctx context.Context) ScenarioResult {
 			"--network=host",
 			"--privileged",
 			"--cgroupns=host",
-			"--tmpfs", "/tmp",
 			"-v", "/tmp/etronium:/tmp/etronium",
+			"-e", "LORD_HOSTNAME="+containerName,
 			"etronium-test:chaos",
 			"lord",
 			"--scheduler=127.0.0.1:50051",
@@ -837,13 +837,16 @@ func countHealthyLords(jsonOut string) int {
 	return strings.Count(jsonOut, `"healthy":true`) + strings.Count(jsonOut, `"healthy": true`)
 }
 
+// readCounter — читает counter из state файла внутри tenant container.
+// chaos-runner запускается на хосте, а state файл — внутри docker volume,
+// который НЕ виден на хосте. Поэтому читаем через docker exec.
 func readCounter(path string) float64 {
-	data, err := os.ReadFile(path)
-	if err != nil {
+	out, err := dockerExec(etroniumTenant, "cat", path)
+	if err != nil || out == "" {
 		return 0
 	}
 	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
 		return 0
 	}
 	if c, ok := m["counter"].(float64); ok {

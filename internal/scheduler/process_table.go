@@ -157,6 +157,29 @@ func (t *ProcessTable) All() []*ProcessEntry {
 	return out
 }
 
+// UpdateLordForHostname — переносит все процессы, у которых Ref.LordId ==
+// oldLordID, на newLordID. Используется при re-bind (lord auto-reconnect с
+// тем же hostname, новым session_id).
+//
+// Возвращает количество перенесённых процессов.
+func (t *ProcessTable) UpdateLordForHostname(oldLordID, newLordID string) int {
+	if oldLordID == "" || newLordID == "" || oldLordID == newLordID {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := 0
+	for _, e := range t.byID {
+		e.mu.Lock()
+		if e.Info.GetRef().GetLordId() == oldLordID {
+			e.Info.Ref.LordId = newLordID
+			n++
+		}
+		e.mu.Unlock()
+	}
+	return n
+}
+
 // entryTable — обратная ссылка на ProcessTable. Нужна для WAL hook'а
 // в UpdateState/UpdateResult. Заполняется в Create().
 var entryTableRegistry sync.Map // map[*ProcessEntry]*ProcessTable

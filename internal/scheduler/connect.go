@@ -58,7 +58,7 @@ func newLordSession(lordID string, stream etroniumv1.LordService_ConnectServer, 
 		stream:  stream,
 		ctx:     ctx,
 		cancel:  cancel,
-		outbox:  make(chan *etroniumv1.LordEvent, 64),
+		outbox:  make(chan *etroniumv1.LordEvent, 1024),
 		procs:   make(map[int32]string),
 	}
 }
@@ -103,6 +103,22 @@ func (s *Server) Connect(stream etroniumv1.LordService_ConnectServer) error {
 	}
 	s.lords.Register(info)
 
+	// Phase 3.5: re-bind — если уже была Lord запись с тем же hostname
+	// (например lord-auto-reconnect с новым session_id), переносим все его
+	// процессы к новому lord_id. Это критично для S04 (net partition):
+	// lord-2 reconnect с новым session_id, но sleep процессы ещё живы на нём.
+	hostname := regCmd.GetHostname()
+	if hostname != "" {
+		if oldLordID := s.lords.FindByHostname(hostname); oldLordID != "" && oldLordID != lordID {
+			sess.logger.Info("lord re-bind: same hostname detected",
+				"old_lord_id", oldLordID, "new_lord_id", lordID, "hostname", hostname)
+			// Update Ref.LordId для всех процессов, у которых Ref.LordId == oldLordID.
+			n := s.processes.UpdateLordForHostname(oldLordID, lordID)
+			sess.logger.Info("lord re-bind: processes migrated", "count", n,
+				"old_lord_id", oldLordID, "new_lord_id", lordID)
+		}
+	}
+
 	sess.logger.Info("lord connected", "hostname", info.Hostname, "cores", info.CpuCoresPhysical)
 
 	// 3. Отправляем ack
@@ -146,14 +162,30 @@ func (s *Server) Connect(stream etroniumv1.LordService_ConnectServer) error {
 }
 
 // sendLoop — читает из outbox и шлёт в stream.
+// sendLoop — вычитывает outbox и шлёт в stream.
+// NB: stream.Send блокирует если lord recv медленный. Чтобы не держать
+// recvLoop в deadlock (heartbeat acks), используем short timeout. Если
+// stream.Send не успевает за 2с, drop event и продолжаем — лучше потерять
+// heartbeat ack чем уронить stream целиком.
 func (sess *lordSession) sendLoop() error {
 	for {
 		select {
 		case <-sess.ctx.Done():
 			return sess.ctx.Err()
 		case ev := <-sess.outbox:
-			if err := sess.stream.Send(ev); err != nil {
-				return err
+			sendDone := make(chan error, 1)
+			go func() { sendDone <- sess.stream.Send(ev) }()
+			select {
+			case <-sess.ctx.Done():
+				return sess.ctx.Err()
+			case err := <-sendDone:
+				if err != nil {
+					return err
+				}
+			case <-time.After(2 * time.Second):
+				sess.logger.Warn("send event timeout (lord recv slow), dropping",
+					"event_type", fmt.Sprintf("%T", ev.Event))
+				continue
 			}
 		}
 	}
@@ -176,13 +208,20 @@ func (sess *lordSession) recvLoop(s *Server) error {
 		case *etroniumv1.LordCmd_Heartbeat:
 			s.lords.UpdateStats(sess.lordID, c.Heartbeat.GetCpuUsedPct(),
 				c.Heartbeat.GetMemUsedBytes(), c.Heartbeat.GetActiveProcesses())
-			sess.outbox <- &etroniumv1.LordEvent{
+			// NB: НЕблокирующий send. Если outbox переполнен (sendLoop медленный),
+			// drop ack — heartbeat уже дошёл до scheduler'а, UpdateStats записан.
+			// Блокирующий send здесь → recvLoop deadlock → stream EOF.
+			select {
+			case sess.outbox <- &etroniumv1.LordEvent{
 				Event: &etroniumv1.LordEvent_HeartbeatAck{
 					HeartbeatAck: &etroniumv1.HeartbeatResponse{
 						Ack:               true,
 						NextHeartbeatSec:  10,
 					},
 				},
+			}:
+			default:
+				sess.logger.Warn("heartbeat ack dropped (outbox full)")
 			}
 		case *etroniumv1.LordCmd_Started:
 			s.handleStarted(sess, c.Started)
@@ -192,13 +231,18 @@ func (sess *lordSession) recvLoop(s *Server) error {
 			s.handleProcessExit(sess, c.ProcessExit)
 		case *etroniumv1.LordCmd_LazyDeath:
 			s.lords.SetDrain(sess.lordID)
-			sess.outbox <- &etroniumv1.LordEvent{
+			// NB: НЕблокирующий send (см. heartbeat ack).
+			select {
+			case sess.outbox <- &etroniumv1.LordEvent{
 				Event: &etroniumv1.LordEvent_LazyDeathAck{
 					LazyDeathAck: &etroniumv1.AcknowledgeLazyDeathResponse{
 						Ack:               true,
 						DrainTimeoutSec:   c.LazyDeath.GetGracePeriodSec(),
 					},
 				},
+			}:
+			default:
+				sess.logger.Warn("lazy death ack dropped (outbox full)")
 			}
 		default:
 			sess.logger.Warn("unknown cmd", "cmd", fmt.Sprintf("%T", c))
@@ -286,6 +330,7 @@ func (s *Server) SendSpawn(lordID string, req *etroniumv1.SpawnRequest) error {
 
 // SendKill — послать LordEvent{kill} lord'у.
 func (s *Server) SendKill(lordID string, req *etroniumv1.KillRequest) error {
+	s.logger.Info("SendKill event to lord", "lord_id", lordID, "process_id", req.ProcessId, "signal", req.SignalNumber)
 	sess, err := s.getSession(lordID)
 	if err != nil {
 		return err
