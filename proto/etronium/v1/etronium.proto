@@ -116,6 +116,12 @@ message Lord {
   // Реальные физические ресурсы lord'а (то что есть на машине).
   int32 cpu_cores_physical = 5;
   int64 mem_total_bytes_physical = 6;
+  // NUMA-overcommit (Phase 2): scheduler может сказать kernel'у lord'а
+  // что ресурсов больше чем физически. Kernel всё равно будет использовать
+  // только local_capacity, но scheduler знает про overcommit и может
+  // мигрировать процессы когда нужно.
+  int32 advertised_cpu_shares = 14;   // если 0 = нет overcommit (= cpu_cores_physical * 100)
+  int64 advertised_mem_bytes = 15;    // если 0 = нет overcommit (= mem_total_bytes_physical)
   // Текущая утилизация.
   int32 cpu_used_pct = 7;
   int64 mem_used_bytes = 8;
@@ -606,6 +612,9 @@ message RegisterRequest {
   bool criu_available = 6;       // поддерживает ли CRIU
   string criu_version = 7;       // для информации
   string auth_token = 8;         // pre-shared token
+  // NUMA-overcommit (Phase 2). 0 = не задан (advertised == physical).
+  int32 advertised_cpu_shares = 9;
+  int64 advertised_mem_bytes = 10;
 }
 
 message RegisterResponse {

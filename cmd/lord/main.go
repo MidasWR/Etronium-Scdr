@@ -24,18 +24,29 @@ func main() {
 		hostname      = flag.String("hostname", "", "override hostname (default: os.Hostname)")
 		logLevel      = flag.String("log", "info", "log level (debug|info|warn|error)")
 		logFormat     = flag.String("log-format", "tint", "log format (tint|json)")
+		advCPU        = flag.Int("advertise-cpu", 0, "NUMA-overcommit: advertise CPU shares to scheduler (0=physical)")
+		advMem        = flag.Int64("advertise-mem", 0, "NUMA-overcommit: advertise mem bytes to scheduler (0=physical)")
 	)
 	flag.Parse()
 
 	logger := newLogger(*logLevel, *logFormat)
 
 	cfg := &lord.Config{
-		SchedulerAddr: *schedulerAddr,
-		Hostname:      *hostname,
-		HeartbeatSec:  10,
-		LogLevel:      *logLevel,
-		CriuAvailable: false,
+		SchedulerAddr:       *schedulerAddr,
+		Hostname:            *hostname,
+		HeartbeatSec:        10,
+		LogLevel:            *logLevel,
+		CriuAvailable:       false,
+		AdvertisedCpuShares: int32(*advCPU),
+		AdvertisedMemBytes:  *advMem,
 	}
+
+	logger.Info("lord starting",
+		"advertise_cpu", cfg.AdvertisedCpuShares,
+		"advertise_mem", cfg.AdvertisedMemBytes,
+		"scheduler", cfg.SchedulerAddr,
+		"hostname", cfg.Hostname,
+	)
 
 	// Graceful shutdown
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

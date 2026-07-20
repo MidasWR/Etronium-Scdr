@@ -19,19 +19,21 @@ import (
 )
 
 // detectHardware — собирает данные о машине для Register.
-func detectHardware(hostname string) (*etroniumv1.RegisterRequest, error) {
+func detectHardware(cfg *Config) (*etroniumv1.RegisterRequest, error) {
 	cpuCores := int32(runtime.NumCPU())
 	memBytes, err := totalMemory()
 	if err != nil {
 		return nil, err
 	}
 	return &etroniumv1.RegisterRequest{
-		Hostname:              hostname,
+		Hostname:              cfg.Hostname,
 		Os:                    "linux",
 		Arch:                  runtime.GOARCH,
 		CpuCoresPhysical:      cpuCores,
 		MemTotalBytesPhysical: memBytes,
-		CriuAvailable:         false,
+		AdvertisedCpuShares:   cfg.AdvertisedCpuShares,
+		AdvertisedMemBytes:    cfg.AdvertisedMemBytes,
+		CriuAvailable:         cfg.CriuAvailable,
 	}, nil
 }
 

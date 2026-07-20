@@ -95,6 +95,8 @@ func (s *Server) Connect(stream etroniumv1.LordService_ConnectServer) error {
 		Arch:                  regCmd.GetArch(),
 		CpuCoresPhysical:      regCmd.GetCpuCoresPhysical(),
 		MemTotalBytesPhysical: regCmd.GetMemTotalBytesPhysical(),
+		AdvertisedCpuShares:   regCmd.GetAdvertisedCpuShares(),
+		AdvertisedMemBytes:    regCmd.GetAdvertisedMemBytes(),
 		CriuAvailable:         regCmd.GetCriuAvailable(),
 		Healthy:               true,
 		LastSeen:              nowTimestamp(),

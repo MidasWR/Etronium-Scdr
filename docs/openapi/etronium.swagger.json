@@ -837,6 +837,16 @@
           "type": "string",
           "format": "int64"
         },
+        "advertisedCpuShares": {
+          "type": "integer",
+          "format": "int32",
+          "description": "NUMA-overcommit (Phase 2): scheduler может сказать kernel'у lord'а\nчто ресурсов больше чем физически. Kernel всё равно будет использовать\nтолько local_capacity, но scheduler знает про overcommit и может\nмигрировать процессы когда нужно.\n\nесли 0 = нет overcommit (= cpu_cores_physical * 100)"
+        },
+        "advertisedMemBytes": {
+          "type": "string",
+          "format": "int64",
+          "title": "если 0 = нет overcommit (= mem_total_bytes_physical)"
+        },
         "cpuUsedPct": {
           "type": "integer",
           "format": "int32",
@@ -1179,6 +1189,15 @@
         "authToken": {
           "type": "string",
           "title": "pre-shared token"
+        },
+        "advertisedCpuShares": {
+          "type": "integer",
+          "format": "int32",
+          "description": "NUMA-overcommit (Phase 2). 0 = не задан (advertised == physical)."
+        },
+        "advertisedMemBytes": {
+          "type": "string",
+          "format": "int64"
         }
       }
     },

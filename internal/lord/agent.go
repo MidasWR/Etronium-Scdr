@@ -118,7 +118,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	defer a.shutdownCancel()
 
 	// 3. Получаем аппаратную инфу для Register
-	hw, err := detectHardware(a.cfg.Hostname)
+	hw, err := detectHardware(a.cfg)
 	if err != nil {
 		return fmt.Errorf("detect hardware: %w", err)
 	}

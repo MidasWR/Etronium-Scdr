@@ -43,7 +43,7 @@ func main() {
 	}
 
 	processes := scheduler.NewProcessTable()
-	lords := scheduler.NewLordRegistry()
+	lords := scheduler.NewLordRegistry(cfg.PlacementAlgo)
 	srv := scheduler.NewServer(cfg, processes, lords, logger)
 
 	// Периодический sweep heartbeat'ов
