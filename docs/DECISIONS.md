@@ -575,3 +575,138 @@ scheduler дописывает `midaswr/` автоматически.
 - ✅ Миграция появляется когда нужна
 - ⚠️ На ранних фазах lord'ы без CRIU — scheduler не сможет балансировать
     нагрузку между ними.
+
+## 024 — CRIU CLI mode для MVP (2026-07-20)
+
+**Контекст:** Ответ на Open Question #13. CRIU имеет два режима работы:
+- **CLI mode**: `criu dump` / `criu restore` как подпроцессы. Простой exit code + stderr.
+- **Daemon mode**: `criu service` слушает на сокете, можно checkpoint несколько процессов
+  параллельно через RPC. Сложнее setup (service lifecycle, auth).
+
+**Решение:** CLI mode для Phase 3. Lord вызывает `criu dump --tree <pid> --images-dir <dir>`
+через `os/exec`, ждёт exit code, читает stderr для ошибок.
+
+**Альтернативы:**
+- Daemon mode — premature optimization. На каждом lord'е у нас 1-10 процессов одновременно,
+  параллельный checkpoint не даст выигрыша. Если станет узким местом — Phase 3.5.
+- Bind mount CRIU namespace — overkill, на lord'ах не нужна изоляция.
+
+**Последствия:**
+- ✅ Простая интеграция (один subprocess per checkpoint/restore).
+- ✅ Нет состояния между вызовами.
+- ⚠️ Каждый dump/restore = fork+exec (миллисекунды overhead). Для 100MB процесса это незаметно
+  vs сам CRIU (~секунды).
+- ⚠️ CRIU требует CAP_CHECKPOINT_RESTORE (или root) — lord'ы должны быть запущены с
+  достаточными capabilities. В Docker: `--privileged` или `--cap-add=CHECKPOINT_RESTORE`.
+
+**Требования к lord'у:**
+- `criu` бинарь в PATH (apt install criu на Debian/Ubuntu)
+- Linux kernel >= 4.9 (для full CRIU support)
+- CRIU версии 3.x (стабильная ветка)
+- Capability CAP_CHECKPOINT_RESTORE
+
+**Сборка cgroup для checkpoint:**
+- CRIU по умолчанию не умеет checkpoint cgroup v2 процессов без `--manage-cgroups=full`
+- Это конфликтует с нашим slice-based изоляцией (Phase 1)
+- Решение: перед checkpoint — `mkdir` пустой cgroup и `echo <pid> > cgroup.procs`,
+  чтобы CRIU видел процесс как standalone. После restore — вернуть в наш slice.
+
+## 025 — Migration triggers: explicit > auto-pressure > lazy death (2026-07-20)
+
+**Контекст:** Phase 3 спецификация: `MigrateRequest{process_id, target_lord_id, auto, reason}`.
+Когда инициировать миграцию?
+
+**Решение:** Три источника trigger'ов, в порядке приоритета:
+1. **Explicit (tenant request)** — `etronium process migrate <id> --to=<lord>`.
+   Проверки: target lord healthy + hasCapacity + criu_available.
+2. **Auto-pressure** — если `MemUsedBytes / AdvertisedMemBytes > 0.85` для lord'а, scheduler
+   выбирает процесс с наибольшим RSS на этом lord'е и мигрирует на лучший другой.
+   Threshold конфигурируемый (env `SCHEDULER_PRESSURE_THRESHOLD=0.85`).
+3. **Lazy death** — lord сказал "ухожу через 30s". Scheduler начинает migrate всех активных
+   процессов с этого lord'а на другие.
+
+**Альтернативы:**
+- Только explicit — нет автоматического балансирования, MOSIX-style не достигается
+- Только auto-pressure — может мигрировать процессы которые только что стартовали (плохой UX)
+- Только lazy death — игнорируем memory pressure пока lord не свалится
+
+**Последствия:**
+- ✅ Постепенное наращивание: сначала Phase 3.0 (explicit), потом Phase 3.1 (pressure), потом Phase 3.2 (lazy death)
+- ✅ Tenant всегда имеет контроль (`auto=false` исключает pressure-trigger)
+- ⚠️ Pressure-detection требует честных метрик — gокет, на котором CPU/MEM от cgroup могут лажать
+  с oversubscribe (Phase 2 архитектурно допускает overcommit)
+
+**Дедупликация:** Один процесс не мигрируем чаще раза в `SCHEDULER_MIGRATE_COOLDOWN=60s` чтобы
+избежать thrashing (процесс мигрирует туда-сюда).
+
+## 026 — Checkpoint transfer: file gRPC streaming (Phase 3) (2026-07-20)
+
+**Контекст:** Ответ на Open Question #15. CRIU dump — это directory с images.
+Как переслать с source lord'а на target lord'а?
+
+**Решение:** Phase 3 — file-based transfer через gRPC bidi streaming.
+- Source lord: после `criu dump` упаковывает images в tar.gz, отдаёт scheduler'у через
+  `PullCheckpoint(stream)` RPC (server-streaming).
+- Scheduler: пересылает tar.gz chunks на target lord через `PushCheckpoint(stream)` RPC.
+- Target lord: распаковывает, делает `criu restore`.
+
+**Альтернативы:**
+- P2P между lord'ами напрямую — но scheduler единственный, кто знает lord_id'ы
+  и может auth'ить; relay через scheduler проще для MVP
+- Shared NFS — внешняя зависимость
+- scp через ssh — добавляет SSH setup
+
+**Последствия:**
+- ✅ Один путь кода для всех пересылок (scheduler как relay)
+- ✅ gRPC streaming с backpressure
+- ⚠️ Latency: source → scheduler → target = 2× network RTT. Для 100MB dump = секунды.
+- ⚠️ Scheduler использует RAM для буферизации chunks (настраиваемый window size).
+
+**Phase 4:** когда будет больше lords в одной L2-сети — P2P transfer, scheduler только координирует.
+
+## 027 — Reconnect stdio после restore через scheduler (Phase 3) (2026-07-20)
+
+**Контекст:** После CRIU restore процесс получает **новый** file descriptor для stdin/stdout/stderr.
+Старый stream на source lord'е закрывается. Tenant всё это время не должен терять вывод.
+
+**Решение:** Tenant stream идёт через scheduler (см. ADR 005/StreamProcessIO).
+При restore:
+1. Source lord шлёт `LordCmd{ProcessExit(reason=MIGRATED, exit_signal=0)}` — НЕ реальный exit,
+   просто "процесс ушёл, я его больше не обслуживаю".
+2. Scheduler создаёт **proxy buffer**: всё что source lord прислал в ring buffer'е с момента
+   checkpoint до exit-event — копируется в новый process entry с тем же process_id.
+3. Tenant продолжает читать из `StreamProcessIO` — scheduler отдаёт старый buffer + новый с target lord'а.
+4. Tenant ничего не замечает (кроме возможного `MIGRATING` event в `WatchProcess`).
+
+**Альтернативы:**
+- Tenant переподключается к новому lord'у напрямую — нарушает single-tenant-N-lords модель
+  (tenant не знает lord'ов, см. ADR 009)
+- WebSocket reconnect — не наш RPC
+
+**Последствия:**
+- ✅ Tenant experience: `etronium process watch` показывает MIGRATING event, но IO непрерывен
+- ⚠️ Scheduler держит ring buffer дольше обычного (время миграции, может секунды)
+- ⚠️ Backpressure: если tenant не читает, scheduler буферизует (до 64MB default, потом дроп)
+
+## 028 — Process IO direction после restore (2026-07-20)
+
+**Контекст:** Когда процесс мигрирует, у него есть stdin (от tenant) и stdout/stderr (к tenant).
+Source lord закрывает свой stdin pipe. Target lord открывает новый.
+
+**Решение:** На стороне scheduler при миграции:
+- Старый `LordCmd{ProcessIo}` от source lord'а стопится (после process_exit с reason=MIGRATED).
+- Новый `LordCmd{ProcessIo}` от target lord'а перехватывается scheduler'ом и добавляется в
+  тот же ring buffer процесса.
+- stdin от tenant'а: если `include_stdin=true` в `StreamProcessIORequest`, scheduler пишет в stdin
+  pipe текущего lord'а. После миграции — pipe переключается на target lord.
+
+**Альтернативы:**
+- Только stdout/stderr поддерживаем в Phase 3 — stdin миграция отложена в Phase 3.5.
+  Это упрощает код (scheduler не буферизует stdin во время миграции).
+
+**Решение:** Phase 3.0 = только stdout/stderr. Stdin через миграцию — Phase 3.5.
+
+**Последствия:**
+- ✅ Простая реализация Phase 3
+- ⚠️ Интерактивные процессы (`cat`, `sh`) могут терять stdin при миграции — предупреждаем
+  в docs что мигрировать интерактивные = bad practice

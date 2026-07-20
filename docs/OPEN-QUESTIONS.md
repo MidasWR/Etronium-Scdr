@@ -21,30 +21,25 @@
 
 ### 11. Какой runtime для fork/exec в Phase 0?
 
-**Статус:** 🤔 Phase 0. `os/exec` (просто) или libcontainer (сразу с namespace/cgroup)?
-**Рекомендация:** `os/exec` для Phase 0. libcontainer в Phase 1 когда нужны namespaces.
+**Статус:** ✅ Решено. `os/exec` в Phase 0/1/2. libcontainer не используется (cgroups v2 пишем напрямую). См. ADR 016.
 
 ### 12. Как лорд делает I/O capture?
 
-**Статус:** 🤔 Phase 0. `cmd.StdoutPipe` + чтение в горутине? Или ring buffer в памяти и stream по запросу?
-**Рекомендация:** ring buffer (8MB default) + stream по запросу через StreamProcessIO.
+**Статус:** ✅ Решено в Phase 0. `cmd.StdoutPipe` + ring buffer (8MB default), stream по запросу через StreamProcessIO. См. `internal/lord/exec.go`.
 
 ### 13. CRIU версия и зависимости?
 
-**Статус:** 🤔 Phase 3.
-- CRIU ~5MB, есть в стандартных Ubuntu репах (`apt install criu`)
-- Нужен ли нам CRIU daemon или CLI mode? CLI проще для MVP.
-- Какой процент реальных процессов поддерживается — надо проверять на демо-нагрузке.
+**Статус:** ✅ Решено (ADR 024). CLI mode, CRIU 3.x из `apt install criu`, требует CAP_CHECKPOINT_RESTORE. См. ADR 024 для cgroup-нюансов.
 
 ### 14. Как измерять memory pressure?
 
-**Статус:** 🤔 Phase 2. По heartbeat'ам (сэмплинг 10s) или PSI pressure stalls из `/proc/pressure/*`?
-**Рекомендация:** heartbeat для MVP (проще), PSI в Phase 4.
+**Статус:** ✅ Частично решено (ADR 025). Phase 3.0 — без auto-pressure, только explicit migrate.
+Phase 3.2 — memory pressure через heartbeat'ы (MemUsed/AdvertisedMem > 0.85). PSI pressure stalls остаётся в Phase 4 как enhancement.
 
 ### 15. Как реализовать file transfer peer-to-peer?
 
-**Статус:** 🤔 Phase 4. Streaming по gRPC, или HTTP с chunked transfer, или просто scp?
-**Рекомендация:** gRPC streaming с offset/size для resume. Если lord'ы в одной L2 — напрямую, иначе relay.
+**Статус:** ✅ Phase 3 checkpoint transfer решено (ADR 026) — relay через scheduler,
+gRPC streaming с backpressure. Полный file API (PullFile/PushFile) — в Phase 4.
 
 ### 16. Как лорд узнаёт про invalidation кэша?
 
@@ -53,13 +48,14 @@
 
 ### 17. Multi-tenant в одном cgroup tree?
 
-**Статус:** 🤔 Phase 1. Под-папки на каждый tenant внутри lord'а?
-**Рекомендация:** да, `/sys/fs/cgroup/etronium/<tenant_id>/<process_id>/`.
+**Статус:** ✅ Решено в Phase 1: cgroup slice `/sys/fs/cgroup/etronium/<lord_id>/<process_id>/`
+(без tenant_id в пути — tenant_id в metadata, cgroup delegation просто). Если multi-tenant на
+lord'е станет реальной нагрузкой, добавим `<tenant_id>/` позже.
 
 ### 18. Process group / session для spawn?
 
-**Статус:** 🤔 Phase 0. POSIX требует PGID/SID. Создаём свою session или присоединяем к существующей?
-**Рекомендация:** каждый Spawn = новая session (setsid), PGID = PID. Просто и предсказуемо.
+**Статус:** ✅ Решено в Phase 0: `SysProcAttr.Setpgid = true` в `internal/lord/exec.go`,
+PGID = PID.
 
 ### 19. Graceful shutdown lord'а?
 

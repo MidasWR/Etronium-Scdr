@@ -119,25 +119,52 @@ $ ./bin/etronium process spawn --exec=/bin/sleep --arg=60
 
 **Цель:** процесс можно мигрировать между lord'ами. Memory pressure balancing работает.
 
-- [ ] Lord: проверка `criu_available` при Register
-- [ ] Lord: criu_ops.checkpoint / restore
-- [ ] Scheduler: migrator с orchestrate dump → transfer → restore → reconnect
-- [ ] Scheduler: автоматическая миграция при memory pressure на lord'е
-- [ ] Scheduler: lazy death trigger → drain + migrate активных процессов
-- [ ] Tenant CLI: `etronium process migrate <id> [--to=lord-X | --auto]`
-- [ ] Tenant CLI: `etronium process watch <id>` — подписка на migration events
-- [ ] Lord: reconnect stdio через scheduler после restore
-- [ ] Lord: file cache invalidation на старом lord'е после миграции
+> Подзадачи спроектированы на основе ADR 024-028 (DECISIONS.md). CLI mode для CRIU,
+> relay через scheduler для transfer, reconnect stdout/stderr (stdin в Phase 3.5).
 
-**Definition of done:**
+### Phase 3.0 — Explicit migrate (MVP, 4–5 дней)
+- [ ] Lord: проверка `criu_available` при Register (`criu check` или `criu --version`)
+- [ ] Lord: `internal/lord/criu.go` — Checkpoint(pid, dir, leave_running) + Restore(dir, params)
+- [ ] Lord: tar.gz images в `criu_ops` (для пересылки)
+- [ ] Lord: capability check — если нет CAP_CHECKPOINT_RESTORE, логируем error и criu_available=false
+- [ ] Lord: cgroup handling перед checkpoint (см. ADR 024 — вывести pid из slice в /)
+- [ ] Scheduler: `PullCheckpoint` (server-streaming) и `PushCheckpoint` (client-streaming) RPCs
+- [ ] Scheduler: migrator.pickTarget(process) — выбирает lord без criu_available=false, hasCapacity, healthy
+- [ ] Scheduler: orchestrator: `Checkpoint(source) → Pull → Push(target) → Restore(target) → exit source`
+- [ ] Scheduler: `Migrate` RPC handler — orchestrate, обновить process_table (lord, local_pid, state=RUNNING)
+- [ ] Tenant CLI: `etronium process migrate <id> --to=lord-X` (target указан)
+- [ ] Tenant CLI: `etronium process migrate <id>` без target → scheduler выбирает лучший
+
+### Phase 3.1 — Reconnect stdout/stderr через scheduler (1–2 дня)
+- [ ] LordCmd{ProcessExit} расширить `reason` полем (enum: NORMAL, KILLED, MIGRATED, CRASHED)
+- [ ] Scheduler: при `reason=MIGRATED` НЕ финализировать процесс — оставить в MIGRATING state
+- [ ] Scheduler: после restore — переключить procs map на новый local_pid, продолжить приём IO
+- [ ] Scheduler: `WatchProcess` стримит `ProcessEvent{STATE_CHANGED, MIGRATED}` событие
+
+### Phase 3.2 — Auto-pressure migration (2–3 дня)
+- [ ] Scheduler: pressure detector в heartbeat sweeper (читать MemUsedBytes из последнего heartbeat)
+- [ ] Scheduler: threshold env `SCHEDULER_PRESSURE_THRESHOLD=0.85` (MemUsed/AdvertisedMem)
+- [ ] Scheduler: при pressure — выбрать процесс с max RSS, мигрировать на лучший другой lord
+- [ ] Scheduler: `SCHEDULER_MIGRATE_COOLDOWN=60s` — не мигрировать процесс чаще
+- [ ] Tenant CLI: `etronium process migrate <id> --auto` — одобрить auto-migration для процесса
+
+### Definition of done (Phase 3.0):
 ```bash
-# Автоматически (memory pressure):
-lord-01 cpu=95% → scheduler мигрирует process_X на lord-02
-
-# Вручную:
+# Ручная миграция:
+$ ./bin/etronium process spawn --exec=/bin/sleep --arg=300
 $ ./bin/etronium process migrate 01H... --to=lord-02
 acknowledged=true new_lord_id=lord-02 new_local_pid=9876
+$ ./bin/etronium process watch 01H...
+STATE_CHANGED: RUNNING -> MIGRATING
+STATE_CHANGED: MIGRATING -> RUNNING (lord-02)
+
+# Auto-pressure (Phase 3.2):
+lord-01 mem=92% advertised → scheduler логирует "auto-migrating process_X to lord-02"
 ```
+
+**Тестовая среда:** CRIU требует `privileged` Docker + `--cap-add=CHECKPOINT_RESTORE`.
+На текущем Docker-хосте проверим что capability реально работает (Phase 0/1 проверяли только cgroups).
+**Требования к lord'у:** `apt install criu` (Debian/Ubuntu), kernel >= 4.9, CRIU 3.x.
 
 ---
 
