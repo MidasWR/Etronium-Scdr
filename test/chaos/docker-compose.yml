@@ -11,15 +11,10 @@
 # Все контейнеры в одной bridge network, плюс host network для gRPC
 # (50051 на хосте). Shared volume /tmp/etronium для state.
 
-version: "3.9"
 
-networks:
-  etronium:
-    driver: bridge
 
 volumes:
   etronium-state:
-  docker-sock:
 
 services:
   scheduler:
@@ -27,31 +22,21 @@ services:
     container_name: etronium-scheduler
     network_mode: host
     privileged: true
-    cgroupns: private
     command:
       - scheduler
       - --addr=:50051
       - --log=info
-      - --log-format=json
     environment:
-      - SCHEDULER_HEARTBEAT_TTL=20s
       - SCHEDULER_PLACEMENT=weighted
       - SCHEDULER_WAL_PATH=/tmp/etronium/scheduler.wal
     volumes:
       - etronium-state:/tmp/etronium
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:50051 || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
 
   lord-active-1:
     image: etronium-test:runtime
     container_name: etronium-lord-active-1
     network_mode: host
     privileged: true
-    cgroupns: private
     tmpfs: /tmp
     command:
       - lord
@@ -59,19 +44,14 @@ services:
       - --advertise-cpu=3200
       - --advertise-mem=4294967296
       - --log=info
-      - --log-format=json
     volumes:
       - etronium-state:/tmp/etronium
-    depends_on:
-      scheduler:
-        condition: service_healthy
 
   lord-active-2:
     image: etronium-test:runtime
     container_name: etronium-lord-active-2
     network_mode: host
     privileged: true
-    cgroupns: private
     tmpfs: /tmp
     command:
       - lord
@@ -79,19 +59,14 @@ services:
       - --advertise-cpu=3200
       - --advertise-mem=4294967296
       - --log=info
-      - --log-format=json
     volumes:
       - etronium-state:/tmp/etronium
-    depends_on:
-      scheduler:
-        condition: service_healthy
 
   lord-active-3:
     image: etronium-test:runtime
     container_name: etronium-lord-active-3
     network_mode: host
     privileged: true
-    cgroupns: private
     tmpfs: /tmp
     command:
       - lord
@@ -99,12 +74,8 @@ services:
       - --advertise-cpu=3200
       - --advertise-mem=4294967296
       - --log=info
-      - --log-format=json
     volumes:
       - etronium-state:/tmp/etronium
-    depends_on:
-      scheduler:
-        condition: service_healthy
 
   # Queued lords — стартуют по запросу chaos-runner'а.
   lord-queued-4:
@@ -112,7 +83,6 @@ services:
     container_name: etronium-lord-queued-4
     network_mode: host
     privileged: true
-    cgroupns: private
     tmpfs: /tmp
     command:
       - lord
@@ -120,10 +90,8 @@ services:
       - --advertise-cpu=3200
       - --advertise-mem=4294967296
       - --log=info
-      - --log-format=json
     volumes:
       - etronium-state:/tmp/etronium
-    entrypoint: ["sleep", "infinity"]  # не стартует lord пока chaos не сделает docker start с переопределением команды
     profiles: ["queued"]
 
   lord-queued-5:
@@ -131,7 +99,6 @@ services:
     container_name: etronium-lord-queued-5
     network_mode: host
     privileged: true
-    cgroupns: private
     tmpfs: /tmp
     command: ["sleep", "infinity"]
     volumes:
@@ -143,7 +110,6 @@ services:
     container_name: etronium-lord-queued-6
     network_mode: host
     privileged: true
-    cgroupns: private
     tmpfs: /tmp
     command: ["sleep", "infinity"]
     volumes:
@@ -164,6 +130,7 @@ services:
     image: rancher/k3s:v1.30.4-k3s1
     container_name: etronium-k3s
     privileged: true
+    network_mode: host
     command:
       - server
       - --disable=traefik,servicelb,metrics-server,local-storage
@@ -178,20 +145,4 @@ services:
     tmpfs:
       - /run
       - /var/run
-    networks:
-      etronium:
-        ipv4_address: 172.30.0.20
 
-  chaos:
-    image: etronium-test:runtime
-    container_name: etronium-chaos
-    network_mode: host
-    privileged: true
-    command:
-      - chaos-runner
-    volumes:
-      - etronium-state:/tmp/etronium
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      - scheduler
-      - tenant

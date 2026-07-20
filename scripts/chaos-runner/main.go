@@ -61,12 +61,22 @@ type Report struct {
 	ClusterInfo map[string]string `json:"cluster_info"`
 }
 
+
+// getEnv — короткий wrapper над os.Getenv.
+func getEnv(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
 var (
-	rng        = rand.New(rand.NewSource(time.Now().UnixNano()))
-	reportMu   sync.Mutex
-	report     Report
-	logFile    *os.File
-	logStartAt = time.Now()
+	rng            = rand.New(rand.NewSource(time.Now().UnixNano()))
+	reportMu       sync.Mutex
+	report         Report
+	logFile        *os.File
+	logStartAt     = time.Now()
+	etroniumTenant = getEnv("ETRONIUM_TENANT", "etronium-tenant")
 )
 
 func log(format string, args ...any) {
@@ -145,7 +155,7 @@ func dockerUnpause(container string) error {
 func waitForScheduler(ctx context.Context, addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		_, err := dockerExec("etronium-tenant", "./bin/etronium", "lords")
+		_, err := dockerExec(etroniumTenant, "/usr/local/bin/etronium", "lords")
 		if err == nil {
 			return nil
 		}
@@ -160,8 +170,8 @@ func waitForScheduler(ctx context.Context, addr string, timeout time.Duration) e
 
 // etroniumCmd — выполнить etronium CLI в tenant контейнере.
 func etroniumCmd(args ...string) (string, error) {
-	cmdStr := "./bin/etronium " + strings.Join(args, " ")
-	return dockerExec("etronium-tenant", "sh", "-c", cmdStr)
+	cmdStr := "/usr/local/bin/etronium " + strings.Join(args, " ")
+	return dockerExec(etroniumTenant, "sh", "-c", cmdStr)
 }
 
 // measureSpawnLatency — spawn N процессов, замерить latency для каждого.
@@ -335,12 +345,27 @@ func S03LordLag(ctx context.Context) ScenarioResult {
 	initialCount := countLordRows(out2)
 	log("    initial lord count: %d", initialCount)
 
-	// Start queued lords one by one.
+	// Start queued lords one by one. Контейнеры были подняты с 'sleep infinity'
+	// (см. test/chaos/docker-compose.yml). Чтобы lord реально стартовал,
+// удаляем sleep-контейнер и поднимаем новый с правильной командой.
 	for i, q := range []string{"queued-4", "queued-5", "queued-6"} {
 		log("    starting %s (t+%ds)", q, (i+1)*15)
-		if err := dockerStart("etronium-lord-" + q); err != nil {
-			log("    start failed for %s: %v", q, err)
-		}
+		containerName := "etronium-lord-" + q
+		_, _ = runCmd("docker", "rm", "-f", containerName)
+		// Используем тот же image etronium-test:chaos.
+		runCmd("docker", "run", "-d",
+			"--name", containerName,
+			"--network=host",
+			"--privileged",
+			"--cgroupns=host",
+			"--tmpfs", "/tmp",
+			"-v", "/tmp/etronium:/tmp/etronium",
+			"etronium-test:chaos",
+			"lord",
+			"--scheduler=127.0.0.1:50051",
+			"--advertise-cpu=3200",
+			"--advertise-mem=4294967296",
+			"--log=info")
 		time.Sleep(15 * time.Second)
 
 		// Re-check count.
@@ -756,7 +781,7 @@ func getSchedulerIP() string {
 	// Пробуем оба.
 	candidates := []string{"etronium-scheduler", "host.docker.internal", "172.17.0.1", "127.0.0.1"}
 	for _, c := range candidates {
-		if out, err := dockerExec("etronium-tenant", "getent", "hosts", c); err == nil && out != "" {
+		if out, err := dockerExec(etroniumTenant, "getent", "hosts", c); err == nil && out != "" {
 			// Возьмём IP.
 			fields := strings.Fields(out)
 			if len(fields) > 0 {
@@ -816,10 +841,9 @@ func main() {
 	// Ensure required containers exist.
 	required := []string{
 		"etronium-scheduler",
-		"etronium-tenant",
+		etroniumTenant,
 		"etronium-lord-active-1", "etronium-lord-active-2", "etronium-lord-active-3",
 		"etronium-lord-queued-4", "etronium-lord-queued-5", "etronium-lord-queued-6",
-		"etronium-k3s",
 	}
 	missing := []string{}
 	for _, c := range required {

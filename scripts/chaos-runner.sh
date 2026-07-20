@@ -15,30 +15,29 @@ docker compose -f "$COMPOSE" down --remove-orphans -v >/dev/null 2>&1 || true
 echo "[chaos] up: scheduler + 3 active lords + tenant + k3s..."
 docker compose -f "$COMPOSE" up -d scheduler lord-active-1 lord-active-2 lord-active-3 tenant k3s
 
-echo "[chaos] waiting for scheduler healthcheck..."
+echo "[chaos] creating queued lord containers (cold, не стартуют)..."
+docker compose -f "$COMPOSE" --profile queued create
+# Queued lords созданы, но не запущены (sleep infinity). Chaos-runner S03 их поднимет.
+
+echo "[chaos] waiting for scheduler to listen on :50051..."
 for i in {1..30}; do
-    if curl -fsS http://127.0.0.1:50051 >/dev/null 2>&1; then
-        echo "[chaos] scheduler up after ${i}s"
+    if ss -tnlp 2>/dev/null | grep -q ":50051"; then
+        echo "[chaos] scheduler listening after ${i}s"
         break
     fi
     sleep 1
 done
+sleep 3  # extra grace — gRPC server needs a moment after bind
 
 echo "[chaos] waiting for lords to register..."
 sleep 8
-docker exec etronium-tenant ./bin/etronium lords 2>&1 | head
+docker exec etronium-tenant /usr/local/bin/etronium lords 2>&1 | head
 
-echo "[chaos] starting chaos-runner container..."
-# Запускаем chaos-runner как foreground-контейнер с подключённым docker socket.
-docker run --rm \
-    --name etronium-chaos \
-    --network=host \
-    --privileged \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    -v "$(pwd)/bin/chaos-runner:/usr/local/bin/chaos-runner:ro" \
-    -v /tmp/etronium:/tmp/etronium \
-    "$IMG" \
-    chaos-runner 2>&1 | tee /tmp/chaos-stdout.log
+echo "[chaos] starting chaos-runner (host binary, docker socket mount)..."
+# chaos-runner binary запускается на хосте — он Go-static, glibc не нужен.
+# Docker socket уже доступен на хосте. tmp/etronium — общий volume.
+export ETRONIUM_TENANT=etronium-tenant
+./bin/chaos-runner 2>&1 | tee /tmp/chaos-stdout.log
 
 EXIT=$?
 
