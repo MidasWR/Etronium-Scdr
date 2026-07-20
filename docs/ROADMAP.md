@@ -123,17 +123,28 @@ $ ./bin/etronium process spawn --exec=/bin/sleep --arg=60
 > relay через scheduler для transfer, reconnect stdout/stderr (stdin в Phase 3.5).
 
 ### Phase 3.0 — Explicit migrate (MVP, 4–5 дней)
-- [ ] Lord: проверка `criu_available` при Register (`criu check` или `criu --version`)
-- [ ] Lord: `internal/lord/criu.go` — Checkpoint(pid, dir, leave_running) + Restore(dir, params)
-- [ ] Lord: tar.gz images в `criu_ops` (для пересылки)
-- [ ] Lord: capability check — если нет CAP_CHECKPOINT_RESTORE, логируем error и criu_available=false
-- [ ] Lord: cgroup handling перед checkpoint (см. ADR 024 — вывести pid из slice в /)
-- [ ] Scheduler: `PullCheckpoint` (server-streaming) и `PushCheckpoint` (client-streaming) RPCs
-- [ ] Scheduler: migrator.pickTarget(process) — выбирает lord без criu_available=false, hasCapacity, healthy
-- [ ] Scheduler: orchestrator: `Checkpoint(source) → Pull → Push(target) → Restore(target) → exit source`
-- [ ] Scheduler: `Migrate` RPC handler — orchestrate, обновить process_table (lord, local_pid, state=RUNNING)
-- [ ] Tenant CLI: `etronium process migrate <id> --to=lord-X` (target указан)
-- [ ] Tenant CLI: `etronium process migrate <id>` без target → scheduler выбирает лучший
+
+**Status (2026-07-20): implementation com imit `a27f34a`, e2e_phase3.sh **красный** из-за двух open issues, см. ниже.**
+
+- [x] Lord: проверка `criu_available` при Register (`criu check`)
+- [x] Lord: `internal/lord/criu.go` — Checkpoint(pid, dir, leave_running) + Restore(dir, params)
+- [ ] Lord: tar.gz images в `criu_ops` (отложено — relay через scheduler shared dir `/tmp/etronium/cp`)
+- [x] Lord: capability check — runtime detection в cmd/lord/main.go через `criu check`
+- [x] Lord: cgroup handling перед checkpoint (`detachPidFromCgroup` + `MovePidToRoot`)
+- [x] Scheduler: orchestrator: `Checkpoint(source) → Pull → Push(target) → Restore(target) → exit source`
+- [x] Scheduler: `Migrate` RPC handler — `internal/scheduler/migrate.go`, cpWaits channels + state MIGRATING
+- [x] Tenant CLI: `etronium process migrate <id> --to=lord-X --auto --reason=<r>`
+- [x] Tenant CLI: `etronium process migrate <id>` без target → scheduler выбирает `PickDifferent(source)` с учётом `criu_available`
+
+**Open issues (открывают Phase 3.0-fix):**
+1. **Target dies ~500ms после restore** — `unshare -p -f --mount-proc` создаёт ephemeral namespace, target process = init namespace orphan → SIGKILL когда criu exit. WIP: попробовать `--restore-sibling` (target = child of lord'а, не orphan) **или** busy-retry `criu restore` с `--pidfile N+1` пока PID не окажется выше threads lord'а.
+2. **PID clash на target** — `Can't fork for N: File exists` если N попадает на thread lord'а (типично 7..14). WIP: pre-fork 20+ `sleep infinity` в `cmd/lord/main.go` startup, чтобы PID counter вырос выше thread'ов lord'а на обоих lords.
+
+**Definition of partial-progress (текущий):**
+- compile green ✅
+- lord dump создаёт 9 image files ✅
+- scheduler получает CheckpointResponse ✅
+- target restore создаёт процесс (briefly) ⚠️ — но процесс умирает через секунду
 
 ### Phase 3.1 — Reconnect stdout/stderr через scheduler (1–2 дня)
 - [ ] LordCmd{ProcessExit} расширить `reason` полем (enum: NORMAL, KILLED, MIGRATED, CRASHED)
