@@ -731,6 +731,9 @@ message LordEvent {
     KillRequest kill = 4;               // послать сигнал
     FilePushRequest file_push = 7;      // file transfer (Phase 4+)
     AcknowledgeLazyDeathResponse lazy_death_ack = 8;
+    // Phase 5: scheduler уходит в shutdown, просит lord'ов drain
+    // (новых процессов не брать, существующих добить через grace).
+    SetDrainRequest set_drain = 9;
   }
 }
 
@@ -752,4 +755,10 @@ message AcknowledgeLazyDeathRequest {
 message AcknowledgeLazyDeathResponse {
   bool ack = 1;
   int32 drain_timeout_sec = 2;
+}
+
+// Phase 5: scheduler graceful shutdown просит lord'ов начать drain.
+message SetDrainRequest {
+  int32 grace_period_sec = 1;   // за сколько секунд lord должен добить активные процессы
+  string reason = 2;            // "scheduler_shutdown" / "rolling_restart" / "deployment"
 }

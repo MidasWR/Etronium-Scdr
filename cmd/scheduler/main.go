@@ -44,6 +44,29 @@ func main() {
 
 	processes := scheduler.NewProcessTable()
 	lords := scheduler.NewLordRegistry(cfg.PlacementAlgo)
+
+	// Phase 5: WAL replay at startup. Failures are non-fatal — just log.
+	walPath := os.Getenv("SCHEDULER_WAL_PATH")
+	if walPath == "" {
+		walPath = "/tmp/etronium/scheduler.wal"
+	}
+	if err := scheduler.WriteHeader(walPath); err != nil {
+		logger.Warn("wal header write failed", "err", err)
+	}
+	if rep, err := scheduler.ReplayWAL(walPath, processes); err != nil {
+		logger.Warn("wal replay failed", "err", err)
+	} else if rep.Creates > 0 {
+		logger.Info("wal replay done", "creates", rep.Creates, "states", rep.States, "results", rep.Results)
+	}
+	wal, err := scheduler.OpenWAL(walPath)
+	if err != nil {
+		logger.Warn("wal open failed, continuing without WAL", "err", err)
+		wal = nil
+	} else {
+		processes.AttachWAL(wal)
+		defer wal.Close()
+	}
+
 	srv := scheduler.NewServer(cfg, processes, lords, logger)
 
 	// Периодический sweep heartbeat'ов
@@ -70,8 +93,20 @@ func main() {
 	go func() {
 		<-ctx.Done()
 		logger.Info("shutdown signal received, draining...")
-		// Даём активным stream'ам до 10 сек на graceful close
-		shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+		// Phase 5 graceful shutdown:
+		//   1. Tell all lords to drain (refuse new spawns, kill active procs).
+		//   2. Wait up to drainTimeout for them to ack.
+		//   3. Then grpcServer.GracefulStop() closes bidi streams cleanly.
+		const drainTimeout = 15 * time.Second
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), drainTimeout)
+		defer drainCancel()
+		if err := srv.Shutdown(drainCtx, drainTimeout); err != nil {
+			logger.Warn("shutdown: drain incomplete", "err", err)
+		}
+
+		// Закрываем gRPC. Active streams получают ~5 сек на graceful close.
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutCancel()
 		done := make(chan struct{})
 		go func() {

@@ -1,0 +1,88 @@
+# docker-compose для локального демо Etronium.
+#
+# Usage:
+#   docker compose -f test/docker-compose.yml up
+#
+# Что поднимается:
+#   - 1 scheduler (внешний порт 50051)
+#   - 3 lords (lord-01, lord-02, lord-03)
+#
+# Tenant commands (из host):
+#   ./bin/etronium process spawn --exec=/bin/sleep --arg=300
+#   ./bin/etronium process list
+#   ./bin/etronium process kill <pid>
+#   ./bin/etronium lords
+
+services:
+  scheduler:
+    image: etronium-test:runtime
+    container_name: etronium-scheduler
+    network_mode: host
+    command: ["scheduler", "--addr=:50051", "--log=info", "--log-format=json"]
+    environment:
+      - SCHEDULER_HEARTBEAT_TTL=15s
+      - SCHEDULER_PLACEMENT=weighted
+      - SCHEDULER_WAL_PATH=/tmp/etronium/scheduler.wal
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    restart: unless-stopped
+
+  lord-01:
+    image: etronium-test:runtime
+    container_name: etronium-lord-01
+    network_mode: host
+    privileged: true
+    cgroupns: private
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:50051
+      - --advertise-cpu=3200
+      - --advertise-mem=4294967296
+      - --log=info
+      - --log-format=json
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    depends_on:
+      - scheduler
+    restart: unless-stopped
+
+  lord-02:
+    image: etronium-test:runtime
+    container_name: etronium-lord-02
+    network_mode: host
+    privileged: true
+    cgroupns: private
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:50051
+      - --advertise-cpu=3200
+      - --advertise-mem=4294967296
+      - --log=info
+      - --log-format=json
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    depends_on:
+      - scheduler
+    restart: unless-stopped
+
+  lord-03:
+    image: etronium-test:runtime
+    container_name: etronium-lord-03
+    network_mode: host
+    privileged: true
+    cgroupns: private
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:50051
+      - --advertise-cpu=3200
+      - --advertise-mem=4294967296
+      - --log=info
+      - --log-format=json
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    depends_on:
+      - scheduler
+    restart: unless-stopped

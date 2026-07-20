@@ -63,6 +63,59 @@ func (s *Server) SweepHeartbeats(ttl time.Duration) []string {
 	return s.lords.SweepHeartbeats(ttl)
 }
 
+// Shutdown — gracefully drain all lords. Sends SetDrain (which results in
+// LordEvent{LazyDeathAck}) to each active session. After drain timeout,
+// we close the gRPC server; lords reconnect elsewhere if scheduler
+// is restarted behind a load-balancer.
+func (s *Server) Shutdown(ctx context.Context, drainTimeout time.Duration) error {
+	s.lordSessionsMu.RLock()
+	sessions := make([]*lordSession, 0, len(s.lordSessions))
+	for _, sess := range s.lordSessions {
+		sessions = append(sessions, sess)
+	}
+	s.lordSessionsMu.RUnlock()
+
+	if len(sessions) == 0 {
+		return nil
+	}
+
+	s.logger.Info("shutdown: requesting drain from lords",
+		"lord_count", len(sessions),
+		"drain_timeout_sec", int(drainTimeout.Seconds()),
+	)
+
+	// Шлём SetDrain каждому lord'у через outbox. Lord должен ответить
+	// LazyDeath событием, мы проставим DrainRequested flag и пошлём
+	// обратно LazyDeathAck с timeout.
+	for _, sess := range sessions {
+		select {
+		case sess.outbox <- &etroniumv1.LordEvent{
+			Event: &etroniumv1.LordEvent_SetDrain{
+				SetDrain: &etroniumv1.SetDrainRequest{
+					GracePeriodSec: int32(drainTimeout.Seconds()),
+				},
+			},
+		}:
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			s.logger.Warn("shutdown: outbox full, skipping drain request",
+				"lord_id", sess.lordID,
+			)
+		}
+	}
+
+	// Ждём drain timeout чтобы lord'ы успели завершить активные процессы
+	// или отказать новые spawn'ы.
+	select {
+	case <-time.After(drainTimeout):
+		s.logger.Info("shutdown: drain timeout reached")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return nil
+}
+
 // ============================================================================
 // SchedulerService — то что вызывает tenant (арендатор)
 // ============================================================================

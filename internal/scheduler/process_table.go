@@ -47,6 +47,9 @@ type ProcessTable struct {
 	mu       sync.RWMutex
 	byID     map[string]*ProcessEntry // process_id → entry
 	byTenant map[string]map[string]*ProcessEntry // tenant_id → process_id → entry
+
+	// Phase 5: WAL hooks. Set by Server at startup.
+	wal *WAL
 }
 
 // NewProcessTable — конструктор.
@@ -55,6 +58,13 @@ func NewProcessTable() *ProcessTable {
 		byID:     make(map[string]*ProcessEntry),
 		byTenant: make(map[string]map[string]*ProcessEntry),
 	}
+}
+
+// AttachWAL — подключить WAL к таблице. WAL события пишутся из UpdateState/UpdateResult.
+func (t *ProcessTable) AttachWAL(w *WAL) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.wal = w
 }
 
 // NewID — ULID для process_id.
@@ -77,6 +87,12 @@ func (t *ProcessTable) Create(info *etroniumv1.ProcessInfo) *ProcessEntry {
 		t.byTenant[info.TenantId] = make(map[string]*ProcessEntry)
 	}
 	t.byTenant[info.TenantId][info.Ref.ProcessId] = entry
+	entryTableRegistry.Store(entry, t)
+
+	// Phase 5: WAL append для create.
+	if t.wal != nil {
+		_ = t.wal.AppendCreate(info)
+	}
 	return entry
 }
 
@@ -141,8 +157,23 @@ func (t *ProcessTable) All() []*ProcessEntry {
 	return out
 }
 
+// entryTable — обратная ссылка на ProcessTable. Нужна для WAL hook'а
+// в UpdateState/UpdateResult. Заполняется в Create().
+var entryTableRegistry sync.Map // map[*ProcessEntry]*ProcessTable
+
+func entryTable(e *ProcessEntry) *ProcessTable {
+	if v, ok := entryTableRegistry.Load(e); ok {
+		return v.(*ProcessTable)
+	}
+	return nil
+}
+
 // UpdateState — атомарно меняет state и будит Wait'еров.
 func (e *ProcessEntry) UpdateState(newState etroniumv1.ProcessState, lordID string, localPID int32) {
+	// Phase 5: WAL append (best-effort).
+	if t := entryTable(e); t != nil && t.wal != nil {
+		_ = t.wal.AppendState(e.Info.GetRef().GetProcessId(), newState, lordID, localPID)
+	}
 	e.mu.Lock()
 	oldState := e.Info.State
 	e.Info.State = newState
@@ -188,6 +219,10 @@ func (e *ProcessEntry) UpdateState(newState etroniumv1.ProcessState, lordID stri
 
 // UpdateResult — записывает exit info (exit_code, exit_signal, exited_at).
 func (e *ProcessEntry) UpdateResult(exitCode, exitSignal int32) {
+	// Phase 5: WAL append (best-effort).
+	if t := entryTable(e); t != nil && t.wal != nil {
+		_ = t.wal.AppendResult(e.Info.GetRef().GetProcessId(), exitCode, exitSignal)
+	}
 	e.mu.Lock()
 	e.Info.ExitCode = exitCode
 	e.Info.ExitSignal = exitSignal

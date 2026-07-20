@@ -58,7 +58,59 @@ gRPC API в [`proto/etronium/v1/etronium.proto`](./proto/etronium/v1/etronium.pr
 
 ## Статус
 
-🚧 **Phase 0 — в работе.** Подробности в `docs/ROADMAP.md`.
+✅ **Phase 0–4 готовы**, Phase 5 (WAL + graceful drain) done, live migration отвергнута.
+
+Текущая функциональность:
+- Multi-lord, weighted placement по CPU+RAM
+- cgroup v2 isolation per process
+- Fault tolerance: lord dies → respawn на здоровом lord'е (V4)
+- Opt-in state serialization для переживания lord death (V5)
+- WAL для process_table (cold start replay)
+- Graceful shutdown с drain lords
+- Prometheus-friendly JSON logs
+
+Не работает: live migration (CRIU) — отвергнута на kernel 6.17. Fault tolerance через V4+V5 вместо неё.
+
+## Quick Start (5 минут)
+
+```bash
+# 1. Build (нужен Go 1.22+):
+make build
+
+# 2. Поднять scheduler + 3 lords (Docker):
+docker compose -f test/docker-compose.yml up -d
+sleep 5
+
+# 3. С tenant CLI:
+./bin/etronium lords                                    # видим 3 lord'а
+./bin/etronium process spawn --exec=/bin/sleep --arg=60  # создать процесс
+./bin/etronium process list                             # список
+
+# 4. 5-минутное демо для PM:
+./scripts/demo-pm.sh
+
+# Остановить:
+docker compose -f test/docker-compose.yml down
+```
+
+## Сценарий fault tolerance вручную
+
+```bash
+# Spawn stateful app:
+./bin/etronium process spawn \
+    --exec=./bin/example-stateful \
+    --state-dump=/tmp/etronium/state/demo.json \
+    --max-restarts=10
+
+# Kill lord container:
+docker kill etronium-lord-02
+
+# Через 5–15 сек:
+./bin/etronium process list                  # процесс снова RUNNING, на другом lord'е
+cat /tmp/etronium/state/demo.json | jq .counter   # counter сохранился
+```
+
+
 
 ## Связь с другим репо
 

@@ -272,6 +272,8 @@ func (a *Agent) handleEvent(ctx context.Context, ev *etroniumv1.LordEvent) error
 	case *etroniumv1.LordEvent_LazyDeathAck:
 		a.logger.Info("lazy death ack received")
 		return errors.New("lazy death requested")
+	case *etroniumv1.LordEvent_SetDrain:
+		return a.handleSetDrain(ctx, e.SetDrain)
 	case *etroniumv1.LordEvent_FilePush:
 		a.logger.Warn("file push not implemented in Phase 0")
 	default:

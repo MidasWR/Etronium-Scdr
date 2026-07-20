@@ -868,6 +868,10 @@
         },
         "lazyDeathAck": {
           "$ref": "#/definitions/v1AcknowledgeLazyDeathResponse"
+        },
+        "setDrain": {
+          "$ref": "#/definitions/v1SetDrainRequest",
+          "description": "Phase 5: scheduler уходит в shutdown, просит lord'ов drain\n(новых процессов не брать, существующих добить через grace)."
         }
       },
       "description": "LordEvent — то что scheduler шлёт lord'у в Connect stream."
@@ -1247,6 +1251,21 @@
           "format": "int32"
         }
       }
+    },
+    "v1SetDrainRequest": {
+      "type": "object",
+      "properties": {
+        "gracePeriodSec": {
+          "type": "integer",
+          "format": "int32",
+          "title": "за сколько секунд lord должен добить активные процессы"
+        },
+        "reason": {
+          "type": "string",
+          "title": "\"scheduler_shutdown\" / \"rolling_restart\" / \"deployment\""
+        }
+      },
+      "description": "Phase 5: scheduler graceful shutdown просит lord'ов начать drain."
     },
     "v1SpawnRequest": {
       "type": "object",

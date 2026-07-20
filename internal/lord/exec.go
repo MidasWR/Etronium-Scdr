@@ -33,6 +33,18 @@ func (a *Agent) handleSpawn(ctx context.Context, req *etroniumv1.SpawnRequest) e
 		return fmt.Errorf("spawn: missing process_id")
 	}
 
+	// Phase 5: refuse spawn during drain. Scheduler will see ProcessExit
+	// with non-zero exit_code and either respawn on another lord or mark
+	// as STOPPED with error.
+	if isDraining() {
+		a.logger.Warn("refusing spawn during drain",
+			"process_id", processID,
+			"exec", req.ExecPath,
+		)
+		a.sendProcessExit(processID, -1, 0, 0, 0)
+		return fmt.Errorf("lord is draining")
+	}
+
 	a.logger.Info("handling spawn",
 		"process_id", processID,
 		"exec", req.ExecPath,
