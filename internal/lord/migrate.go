@@ -165,7 +165,6 @@ func (a *Agent) handleRestore(ctx context.Context, ev *etroniumv1.LordEvent_Rest
 	// CRIU restore с --restore-detached
 	newPID, err := a.criu.Restore(ctx, RestoreOpts{
 		ImagesDir: imagesDir,
-		Detached:  true,
 	}, execSpec)
 	if err != nil {
 		return fmt.Errorf("criu restore: %w", err)

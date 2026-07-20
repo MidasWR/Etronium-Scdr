@@ -170,12 +170,8 @@ func (c *CriuOps) Restore(ctx context.Context, opts RestoreOpts, execSpec ExecSp
 		"restore",
 		"-D", opts.ImagesDir,
 		"-o", filepath.Join(opts.ImagesDir, "criu-restore.log"),
-		"--shell-job",
-		"--restore-sibling", // target process = child of lord (не orphan), переживает criu exit
+		"--shell-job", // non-detached: target PPID=criu, but setsid+session keeps target alive after criu exit
 		"--pidfile", pidfile,
-	}
-	if opts.Detached {
-		args = append(args, "--restore-detached")
 	}
 	if opts.Verbose {
 		args = append(args, "-v", "4")
@@ -185,7 +181,8 @@ func (c *CriuOps) Restore(ctx context.Context, opts RestoreOpts, execSpec ExecSp
 	// при restore — процесс восстанавливается с argv/env, которые были в checkpoint).
 	// exec параметры сохранены в images, restore их использует автоматически.
 
-	// Используем unshare -pf (pid + fork) чтобы создать новый PID namespace.
+	// НЕ используем unshare: процесс остаётся в lord namespace (PID global видим),
+	// pre-fork dummy процессов в lord startup поднимает PID counter выше thread'ов.
 	// В новом namespace criu = PID 1 и любой target PID из images свободен.
 	// После restore процесс существует внутри namespace — мы получим его
 	// namespace-local PID из pidfile.
