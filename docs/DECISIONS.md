@@ -710,3 +710,61 @@ Source lord закрывает свой stdin pipe. Target lord открывае
 - ✅ Простая реализация Phase 3
 - ⚠️ Интерактивные процессы (`cat`, `sh`) могут терять stdin при миграции — предупреждаем
   в docs что мигрировать интерактивные = bad practice
+
+## ADR 028 — Abandon CRIU live migration in favour of user-space fault tolerance (2026-07-20)
+
+**Контекст:** Phase 3.0 был CRIU-based live migration. После нескольких дней экспериментов на
+kernel 6.17 + Docker + CRIU 4.2 from source выяснилось:
+- CRIU restore требует `unshare -p -f --mount-proc` для vDSO compat на kernel 6.x.
+- Namespace death kills target когда CRIU exit'ит (target это init'ов child, namespace teardown → SIGKILL).
+- `--restore-detached` / `--restore-sibling` НЕ помогают (kernel 6.x subreaper не работает на namespace level).
+- `criu-ns` Python script с `pidns_holder()` double-fork — то же ограничение ядра.
+- На kernel 5.x (Ubuntu 22.04 LTS без HWE) namespace не требуется → restore работает напрямую.
+  Но это **требует** kernel downgrade или ждать фикса в kernel 6.x — out of scope.
+
+**Решение:** Phase 3 CRIU migration **полностью отменена**. Вместо неё:
+- **V4 (Phase 3.4)**: lord disconnect → scheduler respawns процесс на здоровом lord'е с тем же exec/argv/env.
+  Это `internal/scheduler/recovery.go`. Уже реализовано.
+- **V5 (Phase 3.4)**: приложение само пишет state в `$ETRONIUM_STATE_DUMP` каждые N секунд; при respawn
+  новое приложение читает state-файл и продолжает. Уже реализовано через `cmd/example-stateful`.
+
+**Преимущества:**
+- ✅ Pure user-space — работает на любом ядре, в любом контейнере
+- ✅ Не требует CRIU / kernel features / privileged capabilities (только cgroups v2)
+- ✅ Простой mental model: "kubernetes pod restart semantics"
+- ✅ Loss window = периодичность state dump (V5), типично 1-10 сек
+
+**Trade-offs:**
+- ⚠️ Не настоящая live migration: процесс реcпаунится с нуля. State сохраняется только для opt-in V5 apps.
+- ⚠️ stdio (stdout/stderr) теряется при respawn. V5 state-dump не покрывает output, только persisted state.
+- ⚠️ Shared storage между lord'ами нужно для V5 (см. OQ #21). NFS / GlusterFS / hostPath.
+
+**Последствия:**
+- Удалены: `internal/lord/criu.go`, `internal/lord/freeze.go`, `cmd/freeze/`, `cmd/lord/test-freeze/`,
+  `test/bin/{criu,criu-ns,etronium-ns*,etronium-subreaper*}`, `test/Dockerfile.criu-builder`,
+  `test/Dockerfile.phase3` → переименован в `test/Dockerfile.runtime`.
+- Proto: `CheckpointRequest/Response`, `RestoreRequest/Response`, `LordCmd.checkpoint_response/restore_response`,
+  `LordEvent.checkpoint/restore`, `ProcessExitReason`, `criu_available`, `criu_checkpointable` — всё удалено.
+- Image etronium-test:phase3 (208 MB с CRIU) → etronium-test:runtime (~85 MB без CRIU).
+- Пример V5: `cmd/example-stateful` пишет counter в `/tmp/etronium/state/<file>.json` каждые 2 сек.
+
+---
+
+## ADR 029 — `etronium process migrate` = fault-tolerant respawn, не CRIU migration (2026-07-20)
+
+**Контекст:** в proto остался RPC `Migrate` (он не CRIU-specific, скорее "move process"). Что он должен
+делать после отказа от CRIU?
+
+**Решение:** `Migrate` RPC = тот же код что `recovery.respawnProcessOnLord`: выбрать другой lord, послать
+`LordEvent{spawn}` с тем же exec/argv/env. Tenant видит: `state=RUNNING, lord_id=new_lord,
+restart_count++`. Не live migration — fault-tolerant respawn.
+
+**Преимущества:**
+- ✅ Tenant API не меняется (был `etronium process migrate`, остался `etronium process migrate`)
+- ✅ Семантика прозрачна: процесс ушёл с одного lord'а, появился на другом
+- ✅ Совместимо с V5 state recovery
+
+**Trade-offs:**
+- ⚠️ Tenant должен понимать что это НЕ настоящая migration — процесс реcпаунится (могут потеряться
+  uncommitted данные, in-memory state). Для отказоустойчивости достаточно; для zero-downtime — нет.
+

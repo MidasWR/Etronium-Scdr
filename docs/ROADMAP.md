@@ -115,76 +115,58 @@ $ ./bin/etronium process spawn --exec=/bin/sleep --arg=60
 
 ---
 
-## Phase 3 — Migration через CRIU (7–10 дней)
+## Phase 3 — Fault Tolerance через user-space (3 дня)
 
-**Цель:** процесс можно мигрировать между lord'ами. Memory pressure balancing работает.
+**Цель:** процесс переживает lord death без live migration. Pure user-space, без OS patches, без CRIU.
 
-> Подзадачи спроектированы на основе ADR 024-028 (DECISIONS.md). CLI mode для CRIU,
-> relay через scheduler для transfer, reconnect stdout/stderr (stdin в Phase 3.5).
+> ADR 028-029 в DECISIONS.md. Live migration (CRIU) была отвергнута — kernel 6.17 + Docker namespace death
+> фундаментально блокирует CRIU restore (см. git history до commit `7d66b82`). Вместо этого:
+> **V4** — scheduler respawns процесс на здоровом lord'е при lord disconnect.
+> **V5** — приложение само пишет state в `$ETRONIUM_STATE_DUMP`, scheduler прокидывает путь в env.
+> При respawn новое приложение читает state-файл и продолжает работу.
 
-### Phase 3.0 — Explicit migrate (MVP, 4–5 дней)
+### Phase 3.4 — Respawn on disconnect + V5 opt-in state dump (DONE)
 
-**Status (2026-07-20 19:40):** commits `a27f34a` / `bf474d4` / `12859f2` — **MVP implementation complete, e2e_phase3.sh красный** на текущем ядре (6.17) + Docker (cgroupns=private). Кратко: CRIU restore **требует** `unshare -p -f --mount-proc` для vDSO compat на kernel 6.x, но namespace прячет target от parent. На kernel 5.x (Ubuntu 22.04 LTS без HWE) — должно работать без namespace.
+**Status (2026-07-20 21:00):** commits `3f00ea6` / `366d7a7` / `7d66b82` — **implementation complete**, build green, e2e_phase2 green. V5 example app `cmd/example-stateful` демонстрирует persistent counter.
 
-**Что сделано (code):**
-- [x] Lord: проверка `criu_available` при Register (`criu check`)
-- [x] Lord: `internal/lord/criu.go` — Checkpoint(pid, dir, leave_running) + Restore(dir, params)
-- [ ] Lord: tar.gz images в `criu_ops` (отложено — relay через scheduler shared dir `/tmp/etronium/cp`)
-- [x] Lord: capability check — runtime detection в cmd/lord/main.go через `criu check`
-- [x] Lord: cgroup handling перед checkpoint (`detachPidFromCgroup` + `MovePidToRoot`)
-- [x] Lord: `prewarmPIDCounter(25)` в cmd/lord/main.go — выравнивает PID counter между source/target lords
-- [x] Scheduler: orchestrator: `Checkpoint(source) → Pull → Push(target) → Restore(target) → exit source`
-- [x] Scheduler: `Migrate` RPC handler — `internal/scheduler/migrate.go`, cpWaits channels + state MIGRATING
-- [x] Tenant CLI: `etronium process migrate <id> --to=lord-X --auto --reason=<r>`
-- [x] Tenant CLI: `etronium process migrate <id>` без target → scheduler выбирает `PickDifferent(source)` с учётом `criu_available`
+**Что сделано:**
+- [x] Proto: PROCESS_STATE_RESTARTING (transient), ProcessInfo.{restart_count, last_error, state_dump_path, max_restarts}, SpawnRequest.{max_restarts, state_dump_path_hint}
+- [x] Scheduler: `internal/scheduler/recovery.go` — `onLordDisconnect()` + `respawnProcessOnLord()`
+- [x] Scheduler: PAUSED/MIGRATING процессы тоже реcпаунятся (was only RUNNING/READY)
+- [x] Scheduler: re-check state перед respawn (race vs delayed ProcessExit/Kill)
+- [x] Scheduler: 10 attempts × ~10s ≈ 55s max wait; после исчерпания все RESTARTING → STOPPED
+- [x] Scheduler: max_restarts honoured (default 10, -1=unlimited); превышение → STOPPED с LastError
+- [x] Scheduler: LastError устанавливается ДО UpdateState/UpdateResult (порядок важен для WatchProcess)
+- [x] Scheduler: `etronium process migrate` → fault-tolerant respawn (тот же путь что recovery)
+- [x] ProcessTable: `ListByLord(lordID, filter)`, `All()` — recovery helpers
+- [x] CLI: `--max-restarts`, `--state-dump` flags на `etronium process spawn`
+- [x] Example app: `cmd/example-stateful/main.go` — counter + state serialization demo
+- [x] Open Question #21: shared storage между lord'ами — задокументировано требование
 
-**Open issues (Phase 3.0-fix, requires kernel-level change):**
-1. **kernel 6.17 vDSO compat requires `--mount-proc` namespace** — на старых kernels (5.x) namespace не нужен, restore работает напрямую.
-2. **namespace death kills target** — `unshare -p -f` ephemeral namespace + criu exit → SIGKILL всему. Решения:
-   - kernel 5.x (не требует namespace)
-   - либо использовать `--restore-without-ns` режим (не существует в CRIU 4.2)
-   - либо прицепить target к parent namespace через kernel hack (`prctl(PR_SET_CHILD_SUBREAPER)`) — не реализовано
+**Не сделано (отложено):**
+- [ ] Auto-pressure migration (Phase 3.2) — зависит от migration, не fault-tolerance. Возможно не нужно вообще.
+- [ ] ptrace-based Freeze+Resume (`internal/lord/freeze.go` удалён, MVP без Resume). Может быть полезен как быстрая замена CRIU для simple процессов, но это 1-2 недели работы на full Resume.
+- [ ] Reconnect stdout/stderr (Phase 3.1) — был для CRIU миграции, теперь не критично: новый процесс теряет output предыдущего instance, но V5 state-file содержит прогресс.
 
-**Протестировано:**
-- compile green ✅
-- dump → 9 image files на source lord ✅
-- scheduler получает CheckpointResponse ✅
-- ручной restore на одном lord'е: target процесс живой, PPID=criu ✅ (в namespace)
-- пулл/pуш images работают ✅
-- end-to-end миграция lord-01 → lord-02: красный — target не виден lord'у снаружи namespace
-
-### Phase 3.1 — Reconnect stdout/stderr через scheduler (1–2 дня)
-- [ ] LordCmd{ProcessExit} расширить `reason` полем (enum: NORMAL, KILLED, MIGRATED, CRASHED)
-- [ ] Scheduler: при `reason=MIGRATED` НЕ финализировать процесс — оставить в MIGRATING state
-- [ ] Scheduler: после restore — переключить procs map на новый local_pid, продолжить приём IO
-- [ ] Scheduler: `WatchProcess` стримит `ProcessEvent{STATE_CHANGED, MIGRATED}` событие
-
-### Phase 3.2 — Auto-pressure migration (2–3 дня)
-- [ ] Scheduler: pressure detector в heartbeat sweeper (читать MemUsedBytes из последнего heartbeat)
-- [ ] Scheduler: threshold env `SCHEDULER_PRESSURE_THRESHOLD=0.85` (MemUsed/AdvertisedMem)
-- [ ] Scheduler: при pressure — выбрать процесс с max RSS, мигрировать на лучший другой lord
-- [ ] Scheduler: `SCHEDULER_MIGRATE_COOLDOWN=60s` — не мигрировать процесс чаще
-- [ ] Tenant CLI: `etronium process migrate <id> --auto` — одобрить auto-migration для процесса
-
-### Definition of done (Phase 3.0):
+### Definition of done (Phase 3.4) ✅
 ```bash
-# Ручная миграция:
-$ ./bin/etronium process spawn --exec=/bin/sleep --arg=300
-$ ./bin/etronium process migrate 01H... --to=lord-02
-acknowledged=true new_lord_id=lord-02 new_local_pid=9876
-$ ./bin/etronium process watch 01H...
-STATE_CHANGED: RUNNING -> MIGRATING
-STATE_CHANGED: MIGRATING -> RUNNING (lord-02)
+# Spawn на lord-01:
+$ ./bin/etronium process spawn --exec=./bin/example-stateful \
+    --state-dump=/tmp/etronium/state/pid.json --max-restarts=3
+process_id=01H... lord=lord-01
 
-# Auto-pressure (Phase 3.2):
-lord-01 mem=92% advertised → scheduler логирует "auto-migrating process_X to lord-02"
+# Kill lord-01:
+$ docker kill lord-01
+
+# Через 5-15 секунд:
+$ ./bin/etronium process get 01H...
+state=RUNNING lord_id=lord-02 restart_count=1
+last_error=""
+
+# Counter в state-файле продолжается с предыдущего значения:
+$ cat /tmp/etronium/state/pid.json | jq .counter
+1234   # не 0!
 ```
-
-**Тестовая среда:** CRIU требует `privileged` Docker + `--cap-add=CHECKPOINT_RESTORE`.
-На текущем Docker-хосте проверим что capability реально работает (Phase 0/1 проверяли только cgroups).
-**Требования к lord'у:** `apt install criu` (Debian/Ubuntu), kernel >= 4.9, CRIU 3.x.
-
----
 
 ## Phase 4 — File operations + Network transparency (5–7 дней)
 
