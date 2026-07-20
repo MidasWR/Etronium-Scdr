@@ -188,17 +188,15 @@ func (s *Server) respawnProcessOnLord(entry *ProcessEntry, newLordID string) err
 	// we leave those as defaults. If a process truly relies on stdin
 	// pipe on initial start, it must declare it via the original
 	// SpawnRequest; we cannot reproduce it here.
-	req := &etroniumv1.SpawnRequest{
-		ProcessId:          processID,
-		TenantId:           entry.Info.GetTenantId(),
-		ExecPath:           entry.Info.GetExecPath(),
-		Argv:               entry.Info.GetArgv(),
-		Env:                entry.Info.GetEnv(),
-		WorkingDir:         entry.Info.GetWorkingDir(),
-		Resources:          entry.Info.GetResources(),
-		StateDumpPathHint:  entry.Info.GetStateDumpPath(),
-		MaxRestarts:        entry.Info.GetMaxRestarts(),
-	}
+	req := buildSpawnRequest(entry.Info, &etroniumv1.SpawnRequest{
+		TenantId:     entry.Info.GetTenantId(),
+		ExecPath:     entry.Info.GetExecPath(),
+		Argv:         entry.Info.GetArgv(),
+		Env:          entry.Info.GetEnv(),
+		WorkingDir:   entry.Info.GetWorkingDir(),
+		Resources:    entry.Info.GetResources(),
+		StdinInitial: nil,
+	})
 
 	if err := s.SendSpawn(newLordID, req); err != nil {
 		entry.mu.Lock()

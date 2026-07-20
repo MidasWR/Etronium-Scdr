@@ -169,9 +169,25 @@ func (a *Agent) recvLoop(ctx context.Context, stream etroniumv1.LordService_Conn
 		return fmt.Errorf("send register: %w", err)
 	}
 
-	// 2. Тикер heartbeat
-	hbTicker := time.NewTicker(time.Duration(a.cfg.HeartbeatSec) * time.Second)
-	defer hbTicker.Stop()
+	// 2. Heartbeat в отдельной goroutine (не блокирует Recv).
+	hbDone := make(chan struct{})
+	go func() {
+		defer close(hbDone)
+		hbTicker := time.NewTicker(time.Duration(a.cfg.HeartbeatSec) * time.Second)
+		defer hbTicker.Stop()
+		for {
+			select {
+			case <-a.shutdownCtx.Done():
+				return
+			case <-hbTicker.C:
+				if err := a.sendHeartbeat(); err != nil {
+					a.logger.Warn("heartbeat send failed", "err", err)
+					return
+				}
+			}
+		}
+	}()
+	defer func() { <-hbDone }()
 
 	// 3. Первый message от scheduler'а — RegisterAck
 	firstEv, err := stream.Recv()
@@ -202,16 +218,11 @@ func (a *Agent) recvLoop(ctx context.Context, stream etroniumv1.LordService_Conn
 
 	// 4. Цикл обработки событий
 	for {
-		// Heartbeat (non-blocking) + Recv (blocking)
+		// Heartbeat идёт в отдельной goroutine, тут только Recv.
 		select {
 		case <-a.shutdownCtx.Done():
 			return a.shutdownCtx.Err()
-		case <-hbTicker.C:
-			if err := a.sendHeartbeat(); err != nil {
-				return err
-			}
 		default:
-			// Неблокирующий тик heartbeat сделан, теперь блокирующее чтение.
 		}
 
 		// Читаем событие от scheduler'а (blocking, с возможностью отмены)

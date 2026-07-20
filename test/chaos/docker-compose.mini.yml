@@ -1,0 +1,82 @@
+# docker-compose.mini.yml — chaos MINI версия.
+# Без k3s, без queued lords. Только базовые 3 сценария за ~3-4 мин.
+#
+# Usage:
+#   bash scripts/chaos-mini.sh
+#
+# Topology:
+#   1× scheduler, 3× lord, 1× tenant = 5 контейнеров (без k3s).
+#   Ожидаемое потребление RAM: ~500 MB.
+
+
+services:
+  scheduler:
+    image: etronium-test:chaos
+    container_name: etronium-mini-scheduler
+    network_mode: host
+    privileged: true
+    command: ["scheduler", "--addr=:50051", "--log=info", ""]
+    environment:
+      - SCHEDULER_PLACEMENT=weighted
+      - SCHEDULER_WAL_PATH=/tmp/etronium/scheduler.wal
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+
+  lord-1:
+    image: etronium-test:chaos
+    container_name: etronium-mini-lord-1
+    network_mode: host
+    privileged: true
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:50051
+      - --advertise-cpu=3200
+      - --advertise-mem=4294967296
+      - --log=info
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    depends_on:
+      - scheduler
+
+  lord-2:
+    image: etronium-test:chaos
+    container_name: etronium-mini-lord-2
+    network_mode: host
+    privileged: true
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:50051
+      - --advertise-cpu=3200
+      - --advertise-mem=4294967296
+      - --log=info
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    depends_on:
+      - scheduler
+
+  lord-3:
+    image: etronium-test:chaos
+    container_name: etronium-mini-lord-3
+    network_mode: host
+    privileged: true
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:50051
+      - --advertise-cpu=3200
+      - --advertise-mem=4294967296
+      - --log=info
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    depends_on:
+      - scheduler
+
+  tenant:
+    image: etronium-test:chaos
+    container_name: etronium-mini-tenant
+    network_mode: host
+    command: ["sleep", "infinity"]
+    volumes:
+      - /tmp/etronium:/tmp/etronium

@@ -174,25 +174,7 @@ func (s *Server) Spawn(ctx context.Context, req *etroniumv1.SpawnRequest) (*etro
 	//    env-переменную ETRONIUM_STATE_DUMP в spawn request. Lord выставит
 	//    её в child env. Приложение при старте читает файл, на restore
 	//    продолжает с последнего state.
-	lordEnv := copyMap(req.Env)
-	if info.GetStateDumpPath() != "" {
-		if lordEnv == nil {
-			lordEnv = make(map[string]string)
-		}
-		lordEnv["ETRONIUM_STATE_DUMP"] = info.GetStateDumpPath()
-	}
-	spawnReq := &etroniumv1.SpawnRequest{
-		ProcessId:         processID,
-		TenantId:          req.TenantId,
-		ExecPath:          req.ExecPath,
-		Argv:              req.Argv,
-		Env:               lordEnv,
-		Resources:         req.Resources,
-		WorkingDir:        req.WorkingDir,
-		StdinInitial:      req.StdinInitial,
-		StateDumpPathHint: req.GetStateDumpPathHint(),
-		MaxRestarts:       req.GetMaxRestarts(),
-	}
+	spawnReq := buildSpawnRequest(info, req)
 
 	if err := s.SendSpawn(lord.LordId, spawnReq); err != nil {
 		entry.UpdateState(etroniumv1.ProcessState_PROCESS_STATE_STOPPED, "", 0)
@@ -356,16 +338,7 @@ func (s *Server) InvalidateFileCache(ctx context.Context, req *etroniumv1.Invali
 // helpers
 // ============================================================================
 
-func copyMap(m map[string]string) map[string]string {
-	if m == nil {
-		return nil
-	}
-	out := make(map[string]string, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
-}
+
 
 // validateResources проверяет что ResourceSpec находится в допустимых рамках.
 //
@@ -398,4 +371,42 @@ func validateResources(r *etroniumv1.ResourceSpec) error {
 		return fmt.Errorf("pids_limit out of range [0..1000000]: %d", r.PidsLimit)
 	}
 	return nil
+}
+
+// buildSpawnRequest — единая точка сборки SpawnRequest для initial spawn и recovery respawn.
+// Инжектит ETRONIUM_STATE_DUMP в env если ProcessInfo.StateDumpPath != "".
+// Используется и в Server.Spawn() и в respawnProcessOnLord() — чтобы V5 state hint
+// доходил до приложения в обоих случаях.
+func buildSpawnRequest(info *etroniumv1.ProcessInfo, req *etroniumv1.SpawnRequest) *etroniumv1.SpawnRequest {
+	lordEnv := copyMap(req.Env)
+	if info.GetStateDumpPath() != "" {
+		if lordEnv == nil {
+			lordEnv = make(map[string]string)
+		}
+		lordEnv["ETRONIUM_STATE_DUMP"] = info.GetStateDumpPath()
+	}
+	return &etroniumv1.SpawnRequest{
+		ProcessId:         info.GetRef().GetProcessId(),
+		TenantId:          info.GetTenantId(),
+		ExecPath:          req.ExecPath,
+		Argv:              req.Argv,
+		Env:               lordEnv,
+		Resources:         req.Resources,
+		WorkingDir:        req.WorkingDir,
+		StdinInitial:      req.StdinInitial,
+		StateDumpPathHint: info.GetStateDumpPath(),
+		MaxRestarts:       info.GetMaxRestarts(),
+	}
+}
+
+// copyMap — defensive copy of map[string]string. Returns nil if src is nil.
+func copyMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
