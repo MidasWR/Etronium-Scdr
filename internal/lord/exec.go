@@ -45,7 +45,12 @@ func (a *Agent) handleSpawn(ctx context.Context, req *etroniumv1.SpawnRequest) e
 		cmd.Dir = req.WorkingDir
 	}
 	cmd.Env = buildEnv(req.Env)
-	// Новая process group (для удобного kill целого дерева)
+	// Новая process group (для удобного kill целого дерева).
+	// Setsid: true не используется — на kernel 6.x + Docker privileged
+	// container `posix_spawn` отказывается от Exec с Setsid (errno EPERM).
+	// При работе lord в namespace wrapper'е см. cmd/lord/lord-wrapper.c,
+	// каждый процесс получает child-of-lord по факту, что и даёт нам
+	// правильную структуру для CRIU dump без Setsid.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdin, err := cmd.StdinPipe()

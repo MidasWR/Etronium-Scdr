@@ -132,6 +132,13 @@ func (s *Server) Connect(stream etroniumv1.LordService_ConnectServer) error {
 	s.lords.MarkUnhealthy(lordID)
 	sess.logger.Info("lord disconnected")
 
+	// Phase 3.4: respawn processes that were running on the dead lord
+	// onto a healthy one. This is the "fault tolerance" path — does not
+	// require CRIU / live migration; the process is simply re-launched
+	// from its original exec/argv/env. V5 opt-in processes that write
+	// state to /tmp/etronium/state/<pid> can recover from there.
+	s.onLordDisconnect(lordID)
+
 	sendErr := <-sendDone
 	if recvErr != nil && !errors.Is(recvErr, io.EOF) {
 		return recvErr

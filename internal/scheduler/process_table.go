@@ -110,6 +110,25 @@ func (t *ProcessTable) ListByTenant(tenantID string, onlyRunning bool) []*Proces
 	return out
 }
 
+// ListByLord — все процессы, у которых lord_id == lordID. filter — optional
+// predicate; nil = no filter. Used by recovery.go to find candidates
+// for respawn when a lord disconnects.
+func (t *ProcessTable) ListByLord(lordID string, filter func(*ProcessEntry) bool) []*ProcessEntry {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	out := make([]*ProcessEntry, 0)
+	for _, e := range t.byID {
+		if e.Info.GetRef().GetLordId() != lordID {
+			continue
+		}
+		if filter != nil && !filter(e) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 // UpdateState — атомарно меняет state и будит Wait'еров.
 func (e *ProcessEntry) UpdateState(newState etroniumv1.ProcessState, lordID string, localPID int32) {
 	e.mu.Lock()

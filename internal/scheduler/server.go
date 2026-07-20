@@ -102,26 +102,43 @@ func (s *Server) Spawn(ctx context.Context, req *etroniumv1.SpawnRequest) (*etro
 			ProcessId: processID,
 			LordId:    lord.LordId,
 		},
-		TenantId:   req.TenantId,
-		ExecPath:   req.ExecPath,
-		Argv:       append([]string{}, req.Argv...),
-		Env:        copyMap(req.Env),
-		WorkingDir: req.WorkingDir,
-		State:      etroniumv1.ProcessState_PROCESS_STATE_READY,
-		StateChangedAt: nowTimestamp(),
-		Resources:  req.Resources,
+		TenantId:        req.TenantId,
+		ExecPath:        req.ExecPath,
+		Argv:            append([]string{}, req.Argv...),
+		Env:             copyMap(req.Env),
+		WorkingDir:      req.WorkingDir,
+		State:           etroniumv1.ProcessState_PROCESS_STATE_READY,
+		StateChangedAt:  nowTimestamp(),
+		Resources:       req.Resources,
+		StateDumpPath:   req.GetStateDumpPathHint(),
+		MaxRestarts:     req.GetMaxRestarts(),
+	}
+	if info.GetMaxRestarts() == 0 {
+		info.MaxRestarts = 10 // sensible default
 	}
 	entry := s.processes.Create(info)
 
 	// 4. Шлём LordEvent{spawn} лорду через его session.
 	//    Лорд в ответ пришлёт ProcessStarted (с local_pid), потом ProcessIo chunks,
 	//    потом ProcessExit.
+	//
+	//    V5 state-dump: если info.StateDumpPath != "", передаём его как
+	//    env-переменную ETRONIUM_STATE_DUMP в spawn request. Lord выставит
+	//    её в child env. Приложение при старте читает файл, на restore
+	//    продолжает с последнего state.
+	lordEnv := copyMap(req.Env)
+	if info.GetStateDumpPath() != "" {
+		if lordEnv == nil {
+			lordEnv = make(map[string]string)
+		}
+		lordEnv["ETRONIUM_STATE_DUMP"] = info.GetStateDumpPath()
+	}
 	spawnReq := &etroniumv1.SpawnRequest{
 		ProcessId:         processID,
 		TenantId:          req.TenantId,
 		ExecPath:          req.ExecPath,
 		Argv:              req.Argv,
-		Env:               req.Env,
+		Env:               lordEnv,
 		Resources:         req.Resources,
 		WorkingDir:        req.WorkingDir,
 		StdinInitial:      req.StdinInitial,

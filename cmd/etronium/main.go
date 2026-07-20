@@ -114,6 +114,8 @@ func spawnCmd() *cobra.Command {
 		argv      []string
 		resources string
 		preferLord string
+		maxRestarts int32
+		stateDump    string
 	)
 	c := &cobra.Command{
 		Use:   "spawn",
@@ -132,10 +134,12 @@ func spawnCmd() *cobra.Command {
 			defer conn.Close()
 
 			req := &etroniumv1.SpawnRequest{
-				TenantId:     tenantID,
-				ExecPath:     execPath,
-				Argv:         argv,
-				PreferLordId: preferLord,
+				TenantId:           tenantID,
+				ExecPath:           execPath,
+				Argv:               argv,
+				PreferLordId:       preferLord,
+				MaxRestarts:        maxRestarts,
+				StateDumpPathHint:  stateDump,
 			}
 			if resources != "" {
 				req.Resources = parseResources(resources)
@@ -152,6 +156,8 @@ func spawnCmd() *cobra.Command {
 	c.Flags().StringVar(&execPath, "exec", "", "executable path (required)")
 	c.Flags().StringSliceVar(&argv, "arg", nil, "argv (repeatable)")
 	c.Flags().StringVar(&resources, "resources", "", "resources JSON e.g. '{\"cpu_shares\":100,\"mem_limit_bytes\":104857600}'")
+	c.Flags().Int32Var(&maxRestarts, "max-restarts", 10, "max restart count on lord failure (0..N, -1=unlimited)")
+	c.Flags().StringVar(&stateDump, "state-dump", "", "hint path for V5 application state serialization (lord exposes it as $ETRONIUM_STATE_DUMP)")
 	c.Flags().StringVar(&preferLord, "prefer-lord", "", "soft-affinity to lord id")
 	return c
 }

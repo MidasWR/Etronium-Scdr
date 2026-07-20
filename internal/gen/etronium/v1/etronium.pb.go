@@ -78,6 +78,10 @@ const (
 	ProcessState_PROCESS_STATE_MIGRATING   ProcessState = 5 // в процессе миграции (CRIU)
 	ProcessState_PROCESS_STATE_EXITED      ProcessState = 6 // завершился нормально
 	ProcessState_PROCESS_STATE_STOPPED     ProcessState = 7 // убит сигналом
+	// Phase 3.4: lord умер во время выполнения процесса, планировщик
+	// сейчас занимается респауном на здоровом lord'е. Этот статус
+	// видим tenant'у как RESTARTING — короткоживущий.
+	ProcessState_PROCESS_STATE_RESTARTING ProcessState = 8
 )
 
 // Enum value maps for ProcessState.
@@ -91,6 +95,7 @@ var (
 		5: "PROCESS_STATE_MIGRATING",
 		6: "PROCESS_STATE_EXITED",
 		7: "PROCESS_STATE_STOPPED",
+		8: "PROCESS_STATE_RESTARTING",
 	}
 	ProcessState_value = map[string]int32{
 		"PROCESS_STATE_UNSPECIFIED": 0,
@@ -101,6 +106,7 @@ var (
 		"PROCESS_STATE_MIGRATING":   5,
 		"PROCESS_STATE_EXITED":      6,
 		"PROCESS_STATE_STOPPED":     7,
+		"PROCESS_STATE_RESTARTING":  8,
 	}
 )
 
@@ -633,9 +639,21 @@ type ProcessInfo struct {
 	MemPeakBytes      int64 `protobuf:"varint,11,opt,name=mem_peak_bytes,json=memPeakBytes,proto3" json:"mem_peak_bytes,omitempty"`
 	NumThreads        int32 `protobuf:"varint,12,opt,name=num_threads,json=numThreads,proto3" json:"num_threads,omitempty"`
 	// exit info (если state in {EXITED, STOPPED})
-	ExitedAt      *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=exited_at,json=exitedAt,proto3" json:"exited_at,omitempty"`
-	ExitCode      int32                  `protobuf:"varint,14,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`       // -1 если killed by signal
-	ExitSignal    int32                  `protobuf:"varint,15,opt,name=exit_signal,json=exitSignal,proto3" json:"exit_signal,omitempty"` // 0 если normal exit
+	ExitedAt   *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=exited_at,json=exitedAt,proto3" json:"exited_at,omitempty"`
+	ExitCode   int32                  `protobuf:"varint,14,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`       // -1 если killed by signal
+	ExitSignal int32                  `protobuf:"varint,15,opt,name=exit_signal,json=exitSignal,proto3" json:"exit_signal,omitempty"` // 0 если normal exit
+	// Phase 3.4: fault tolerance counters. restart_count is the number
+	// of times this process was respawned because its lord died. V5
+	// opt-in state-serialized processes can recover from latest snapshot.
+	RestartCount int32  `protobuf:"varint,18,opt,name=restart_count,json=restartCount,proto3" json:"restart_count,omitempty"`
+	LastError    string `protobuf:"bytes,19,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"` // human-readable; set on last respawn failure
+	// Path to last-known application state dump (V5). Empty if process
+	// does not opt in to periodic state serialization.
+	StateDumpPath string `protobuf:"bytes,20,opt,name=state_dump_path,json=stateDumpPath,proto3" json:"state_dump_path,omitempty"`
+	// Max allowed restart count before scheduler gives up and finalizes.
+	MaxRestarts int32 `protobuf:"varint,21,opt,name=max_restarts,json=maxRestarts,proto3" json:"max_restarts,omitempty"` // 0 = default (10), -1 = unlimited
+	// Optional wall-clock deadline after which restarts are denied.
+	DeadlineAt    *timestamppb.Timestamp `protobuf:"bytes,22,opt,name=deadline_at,json=deadlineAt,proto3" json:"deadline_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -787,6 +805,41 @@ func (x *ProcessInfo) GetExitSignal() int32 {
 		return x.ExitSignal
 	}
 	return 0
+}
+
+func (x *ProcessInfo) GetRestartCount() int32 {
+	if x != nil {
+		return x.RestartCount
+	}
+	return 0
+}
+
+func (x *ProcessInfo) GetLastError() string {
+	if x != nil {
+		return x.LastError
+	}
+	return ""
+}
+
+func (x *ProcessInfo) GetStateDumpPath() string {
+	if x != nil {
+		return x.StateDumpPath
+	}
+	return ""
+}
+
+func (x *ProcessInfo) GetMaxRestarts() int32 {
+	if x != nil {
+		return x.MaxRestarts
+	}
+	return 0
+}
+
+func (x *ProcessInfo) GetDeadlineAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DeadlineAt
+	}
+	return nil
 }
 
 // Событие процесса для WatchProcess stream.
@@ -1069,10 +1122,17 @@ type SpawnRequest struct {
 	PreferLordId       string `protobuf:"bytes,7,opt,name=prefer_lord_id,json=preferLordId,proto3" json:"prefer_lord_id,omitempty"`                  // soft-affinity
 	CriuCheckpointable bool   `protobuf:"varint,8,opt,name=criu_checkpointable,json=criuCheckpointable,proto3" json:"criu_checkpointable,omitempty"` // подсказка lord'у что процесс готов к миграции
 	// Initial stdin (если есть что-то ввести сразу при старте).
-	StdinInitial  []byte `protobuf:"bytes,9,opt,name=stdin_initial,json=stdinInitial,proto3" json:"stdin_initial,omitempty"`
-	ProcessId     string `protobuf:"bytes,10,opt,name=process_id,json=processId,proto3" json:"process_id,omitempty"` // глобальный ID, присваивается scheduler'ом
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	StdinInitial []byte `protobuf:"bytes,9,opt,name=stdin_initial,json=stdinInitial,proto3" json:"stdin_initial,omitempty"`
+	ProcessId    string `protobuf:"bytes,10,opt,name=process_id,json=processId,proto3" json:"process_id,omitempty"` // глобальный ID, присваивается scheduler'ом
+	// Phase 3.4: fault tolerance options. If max_restarts > 0 and the
+	// process lives on a lord that dies, scheduler respawns on another
+	// lord automatically. If state_dump_path_hint is set, scheduler
+	// passes it to the lord which exposes it to the process via
+	// $ETRONIUM_STATE_DUMP env var (used by V5 opt-in apps).
+	MaxRestarts       int32  `protobuf:"varint,11,opt,name=max_restarts,json=maxRestarts,proto3" json:"max_restarts,omitempty"`                      // 0 = inherit global default (10)
+	StateDumpPathHint string `protobuf:"bytes,12,opt,name=state_dump_path_hint,json=stateDumpPathHint,proto3" json:"state_dump_path_hint,omitempty"` // e.g. "/var/lib/etronium/state/<pid>.json"
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SpawnRequest) Reset() {
@@ -1171,6 +1231,20 @@ func (x *SpawnRequest) GetStdinInitial() []byte {
 func (x *SpawnRequest) GetProcessId() string {
 	if x != nil {
 		return x.ProcessId
+	}
+	return ""
+}
+
+func (x *SpawnRequest) GetMaxRestarts() int32 {
+	if x != nil {
+		return x.MaxRestarts
+	}
+	return 0
+}
+
+func (x *SpawnRequest) GetStateDumpPathHint() string {
+	if x != nil {
+		return x.StateDumpPathHint
 	}
 	return ""
 }
@@ -3953,7 +4027,7 @@ const file_etronium_v1_etronium_proto_rawDesc = "" +
 	"reputation\x18\v \x01(\x01R\n" +
 	"reputation\x127\n" +
 	"\tlast_seen\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12%\n" +
-	"\x0ecriu_available\x18\r \x01(\bR\rcriuAvailable\"\xfe\x05\n" +
+	"\x0ecriu_available\x18\r \x01(\bR\rcriuAvailable\"\xca\a\n" +
 	"\vProcessInfo\x12)\n" +
 	"\x03ref\x18\x01 \x01(\v2\x17.etronium.v1.ProcessRefR\x03ref\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x1d\n" +
@@ -3976,7 +4050,14 @@ const file_etronium_v1_etronium_proto_rawDesc = "" +
 	"\texited_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\bexitedAt\x12\x1b\n" +
 	"\texit_code\x18\x0e \x01(\x05R\bexitCode\x12\x1f\n" +
 	"\vexit_signal\x18\x0f \x01(\x05R\n" +
-	"exitSignal\x1a6\n" +
+	"exitSignal\x12#\n" +
+	"\rrestart_count\x18\x12 \x01(\x05R\frestartCount\x12\x1d\n" +
+	"\n" +
+	"last_error\x18\x13 \x01(\tR\tlastError\x12&\n" +
+	"\x0fstate_dump_path\x18\x14 \x01(\tR\rstateDumpPath\x12!\n" +
+	"\fmax_restarts\x18\x15 \x01(\x05R\vmaxRestarts\x12;\n" +
+	"\vdeadline_at\x18\x16 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"deadlineAt\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbc\x04\n" +
@@ -4010,7 +4091,7 @@ const file_etronium_v1_etronium_proto_rawDesc = "" +
 	"\x12STREAM_UNSPECIFIED\x10\x00\x12\x10\n" +
 	"\fSTREAM_STDIN\x10\x01\x12\x11\n" +
 	"\rSTREAM_STDOUT\x10\x02\x12\x11\n" +
-	"\rSTREAM_STDERR\x10\x03\"\xbf\x03\n" +
+	"\rSTREAM_STDERR\x10\x03\"\x93\x04\n" +
 	"\fSpawnRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1b\n" +
 	"\texec_path\x18\x02 \x01(\tR\bexecPath\x12\x12\n" +
@@ -4024,7 +4105,9 @@ const file_etronium_v1_etronium_proto_rawDesc = "" +
 	"\rstdin_initial\x18\t \x01(\fR\fstdinInitial\x12\x1d\n" +
 	"\n" +
 	"process_id\x18\n" +
-	" \x01(\tR\tprocessId\x1a6\n" +
+	" \x01(\tR\tprocessId\x12!\n" +
+	"\fmax_restarts\x18\v \x01(\x05R\vmaxRestarts\x12/\n" +
+	"\x14state_dump_path_hint\x18\f \x01(\tR\x11stateDumpPathHint\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"g\n" +
@@ -4243,7 +4326,7 @@ const file_etronium_v1_etronium_proto_rawDesc = "" +
 	"\x10grace_period_sec\x18\x02 \x01(\x05R\x0egracePeriodSec\"\\\n" +
 	"\x1cAcknowledgeLazyDeathResponse\x12\x10\n" +
 	"\x03ack\x18\x01 \x01(\bR\x03ack\x12*\n" +
-	"\x11drain_timeout_sec\x18\x02 \x01(\x05R\x0fdrainTimeoutSec*\xe4\x01\n" +
+	"\x11drain_timeout_sec\x18\x02 \x01(\x05R\x0fdrainTimeoutSec*\x82\x02\n" +
 	"\fProcessState\x12\x1d\n" +
 	"\x19PROCESS_STATE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11PROCESS_STATE_NEW\x10\x01\x12\x17\n" +
@@ -4252,7 +4335,8 @@ const file_etronium_v1_etronium_proto_rawDesc = "" +
 	"\x14PROCESS_STATE_PAUSED\x10\x04\x12\x1b\n" +
 	"\x17PROCESS_STATE_MIGRATING\x10\x05\x12\x18\n" +
 	"\x14PROCESS_STATE_EXITED\x10\x06\x12\x19\n" +
-	"\x15PROCESS_STATE_STOPPED\x10\a*\xbb\x01\n" +
+	"\x15PROCESS_STATE_STOPPED\x10\a\x12\x1c\n" +
+	"\x18PROCESS_STATE_RESTARTING\x10\b*\xbb\x01\n" +
 	"\x11ProcessExitReason\x12#\n" +
 	"\x1fPROCESS_EXIT_REASON_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aPROCESS_EXIT_REASON_NORMAL\x10\x01\x12\x1e\n" +
@@ -4395,94 +4479,95 @@ var file_etronium_v1_etronium_proto_depIdxs = []int32{
 	57, // 4: etronium.v1.ProcessInfo.state_changed_at:type_name -> google.protobuf.Timestamp
 	4,  // 5: etronium.v1.ProcessInfo.resources:type_name -> etronium.v1.ResourceSpec
 	57, // 6: etronium.v1.ProcessInfo.exited_at:type_name -> google.protobuf.Timestamp
-	5,  // 7: etronium.v1.ProcessEvent.ref:type_name -> etronium.v1.ProcessRef
-	2,  // 8: etronium.v1.ProcessEvent.type:type_name -> etronium.v1.ProcessEvent.EventType
-	57, // 9: etronium.v1.ProcessEvent.at:type_name -> google.protobuf.Timestamp
-	0,  // 10: etronium.v1.ProcessEvent.new_state:type_name -> etronium.v1.ProcessState
-	5,  // 11: etronium.v1.ProcessEvent.child_ref:type_name -> etronium.v1.ProcessRef
-	9,  // 12: etronium.v1.ProcessEvent.usage:type_name -> etronium.v1.ResourceUsage
-	3,  // 13: etronium.v1.IOChunk.stream:type_name -> etronium.v1.IOChunk.Stream
-	54, // 14: etronium.v1.SpawnRequest.env:type_name -> etronium.v1.SpawnRequest.EnvEntry
-	4,  // 15: etronium.v1.SpawnRequest.resources:type_name -> etronium.v1.ResourceSpec
-	0,  // 16: etronium.v1.KillResponse.current_state:type_name -> etronium.v1.ProcessState
-	7,  // 17: etronium.v1.ListProcessesResponse.processes:type_name -> etronium.v1.ProcessInfo
-	0,  // 18: etronium.v1.MigrateResponse.current_state:type_name -> etronium.v1.ProcessState
-	6,  // 19: etronium.v1.ListLordsResponse.lords:type_name -> etronium.v1.Lord
-	2,  // 20: etronium.v1.WatchProcessRequest.event_filter:type_name -> etronium.v1.ProcessEvent.EventType
-	55, // 21: etronium.v1.ExecRemoteRequest.env:type_name -> etronium.v1.ExecRemoteRequest.EnvEntry
-	4,  // 22: etronium.v1.ExecRemoteRequest.resources:type_name -> etronium.v1.ResourceSpec
-	56, // 23: etronium.v1.RestoreRequest.env:type_name -> etronium.v1.RestoreRequest.EnvEntry
-	4,  // 24: etronium.v1.RestoreRequest.resources:type_name -> etronium.v1.ResourceSpec
-	30, // 25: etronium.v1.LordCmd.register:type_name -> etronium.v1.RegisterRequest
-	32, // 26: etronium.v1.LordCmd.heartbeat:type_name -> etronium.v1.HeartbeatRequest
-	47, // 27: etronium.v1.LordCmd.started:type_name -> etronium.v1.ProcessStarted
-	48, // 28: etronium.v1.LordCmd.io:type_name -> etronium.v1.ProcessIo
-	50, // 29: etronium.v1.LordCmd.process_exit:type_name -> etronium.v1.ProcessExit
-	51, // 30: etronium.v1.LordCmd.lazy_death:type_name -> etronium.v1.AcknowledgeLazyDeathRequest
-	43, // 31: etronium.v1.LordCmd.checkpoint_response:type_name -> etronium.v1.CheckpointResponse
-	45, // 32: etronium.v1.LordCmd.restore_response:type_name -> etronium.v1.RestoreResponse
-	57, // 33: etronium.v1.ProcessStarted.at:type_name -> google.protobuf.Timestamp
-	10, // 34: etronium.v1.ProcessIo.chunk:type_name -> etronium.v1.IOChunk
-	31, // 35: etronium.v1.LordEvent.register_ack:type_name -> etronium.v1.RegisterResponse
-	33, // 36: etronium.v1.LordEvent.heartbeat_ack:type_name -> etronium.v1.HeartbeatResponse
-	11, // 37: etronium.v1.LordEvent.spawn:type_name -> etronium.v1.SpawnRequest
-	12, // 38: etronium.v1.LordEvent.kill:type_name -> etronium.v1.KillRequest
-	42, // 39: etronium.v1.LordEvent.checkpoint:type_name -> etronium.v1.CheckpointRequest
-	44, // 40: etronium.v1.LordEvent.restore:type_name -> etronium.v1.RestoreRequest
-	40, // 41: etronium.v1.LordEvent.file_push:type_name -> etronium.v1.FilePushRequest
-	52, // 42: etronium.v1.LordEvent.lazy_death_ack:type_name -> etronium.v1.AcknowledgeLazyDeathResponse
-	1,  // 43: etronium.v1.ProcessExit.reason:type_name -> etronium.v1.ProcessExitReason
-	11, // 44: etronium.v1.SchedulerService.Spawn:input_type -> etronium.v1.SpawnRequest
-	12, // 45: etronium.v1.SchedulerService.Kill:input_type -> etronium.v1.KillRequest
-	14, // 46: etronium.v1.SchedulerService.Wait:input_type -> etronium.v1.WaitRequest
-	15, // 47: etronium.v1.SchedulerService.GetProcess:input_type -> etronium.v1.GetProcessRequest
-	16, // 48: etronium.v1.SchedulerService.ListProcesses:input_type -> etronium.v1.ListProcessesRequest
-	18, // 49: etronium.v1.SchedulerService.Migrate:input_type -> etronium.v1.MigrateRequest
-	20, // 50: etronium.v1.SchedulerService.ListLords:input_type -> etronium.v1.ListLordsRequest
-	22, // 51: etronium.v1.SchedulerService.StreamProcessIO:input_type -> etronium.v1.StreamProcessIORequest
-	23, // 52: etronium.v1.SchedulerService.WatchProcess:input_type -> etronium.v1.WatchProcessRequest
-	24, // 53: etronium.v1.SchedulerService.PullFile:input_type -> etronium.v1.PullFileRequest
-	26, // 54: etronium.v1.SchedulerService.PushFile:input_type -> etronium.v1.PushFileRequest
-	28, // 55: etronium.v1.SchedulerService.InvalidateFileCache:input_type -> etronium.v1.InvalidateFileCacheRequest
-	46, // 56: etronium.v1.LordService.Connect:input_type -> etronium.v1.LordCmd
-	30, // 57: etronium.v1.LordService.Register:input_type -> etronium.v1.RegisterRequest
-	32, // 58: etronium.v1.LordService.Heartbeat:input_type -> etronium.v1.HeartbeatRequest
-	34, // 59: etronium.v1.LordService.ExecRemote:input_type -> etronium.v1.ExecRemoteRequest
-	35, // 60: etronium.v1.LordService.KillRemote:input_type -> etronium.v1.KillRemoteRequest
-	37, // 61: etronium.v1.LordService.StatsRemote:input_type -> etronium.v1.StatsRemoteRequest
-	38, // 62: etronium.v1.LordService.FilePull:input_type -> etronium.v1.FilePullRequest
-	40, // 63: etronium.v1.LordService.FilePush:input_type -> etronium.v1.FilePushRequest
-	42, // 64: etronium.v1.LordService.Checkpoint:input_type -> etronium.v1.CheckpointRequest
-	44, // 65: etronium.v1.LordService.Restore:input_type -> etronium.v1.RestoreRequest
-	51, // 66: etronium.v1.LordService.AcknowledgeLazyDeath:input_type -> etronium.v1.AcknowledgeLazyDeathRequest
-	7,  // 67: etronium.v1.SchedulerService.Spawn:output_type -> etronium.v1.ProcessInfo
-	13, // 68: etronium.v1.SchedulerService.Kill:output_type -> etronium.v1.KillResponse
-	7,  // 69: etronium.v1.SchedulerService.Wait:output_type -> etronium.v1.ProcessInfo
-	7,  // 70: etronium.v1.SchedulerService.GetProcess:output_type -> etronium.v1.ProcessInfo
-	17, // 71: etronium.v1.SchedulerService.ListProcesses:output_type -> etronium.v1.ListProcessesResponse
-	19, // 72: etronium.v1.SchedulerService.Migrate:output_type -> etronium.v1.MigrateResponse
-	21, // 73: etronium.v1.SchedulerService.ListLords:output_type -> etronium.v1.ListLordsResponse
-	10, // 74: etronium.v1.SchedulerService.StreamProcessIO:output_type -> etronium.v1.IOChunk
-	8,  // 75: etronium.v1.SchedulerService.WatchProcess:output_type -> etronium.v1.ProcessEvent
-	25, // 76: etronium.v1.SchedulerService.PullFile:output_type -> etronium.v1.PullFileResponse
-	27, // 77: etronium.v1.SchedulerService.PushFile:output_type -> etronium.v1.PushFileResponse
-	29, // 78: etronium.v1.SchedulerService.InvalidateFileCache:output_type -> etronium.v1.InvalidateFileCacheResponse
-	49, // 79: etronium.v1.LordService.Connect:output_type -> etronium.v1.LordEvent
-	31, // 80: etronium.v1.LordService.Register:output_type -> etronium.v1.RegisterResponse
-	33, // 81: etronium.v1.LordService.Heartbeat:output_type -> etronium.v1.HeartbeatResponse
-	10, // 82: etronium.v1.LordService.ExecRemote:output_type -> etronium.v1.IOChunk
-	36, // 83: etronium.v1.LordService.KillRemote:output_type -> etronium.v1.KillRemoteResponse
-	6,  // 84: etronium.v1.LordService.StatsRemote:output_type -> etronium.v1.Lord
-	39, // 85: etronium.v1.LordService.FilePull:output_type -> etronium.v1.FilePullResponse
-	41, // 86: etronium.v1.LordService.FilePush:output_type -> etronium.v1.FilePushResponse
-	43, // 87: etronium.v1.LordService.Checkpoint:output_type -> etronium.v1.CheckpointResponse
-	45, // 88: etronium.v1.LordService.Restore:output_type -> etronium.v1.RestoreResponse
-	52, // 89: etronium.v1.LordService.AcknowledgeLazyDeath:output_type -> etronium.v1.AcknowledgeLazyDeathResponse
-	67, // [67:90] is the sub-list for method output_type
-	44, // [44:67] is the sub-list for method input_type
-	44, // [44:44] is the sub-list for extension type_name
-	44, // [44:44] is the sub-list for extension extendee
-	0,  // [0:44] is the sub-list for field type_name
+	57, // 7: etronium.v1.ProcessInfo.deadline_at:type_name -> google.protobuf.Timestamp
+	5,  // 8: etronium.v1.ProcessEvent.ref:type_name -> etronium.v1.ProcessRef
+	2,  // 9: etronium.v1.ProcessEvent.type:type_name -> etronium.v1.ProcessEvent.EventType
+	57, // 10: etronium.v1.ProcessEvent.at:type_name -> google.protobuf.Timestamp
+	0,  // 11: etronium.v1.ProcessEvent.new_state:type_name -> etronium.v1.ProcessState
+	5,  // 12: etronium.v1.ProcessEvent.child_ref:type_name -> etronium.v1.ProcessRef
+	9,  // 13: etronium.v1.ProcessEvent.usage:type_name -> etronium.v1.ResourceUsage
+	3,  // 14: etronium.v1.IOChunk.stream:type_name -> etronium.v1.IOChunk.Stream
+	54, // 15: etronium.v1.SpawnRequest.env:type_name -> etronium.v1.SpawnRequest.EnvEntry
+	4,  // 16: etronium.v1.SpawnRequest.resources:type_name -> etronium.v1.ResourceSpec
+	0,  // 17: etronium.v1.KillResponse.current_state:type_name -> etronium.v1.ProcessState
+	7,  // 18: etronium.v1.ListProcessesResponse.processes:type_name -> etronium.v1.ProcessInfo
+	0,  // 19: etronium.v1.MigrateResponse.current_state:type_name -> etronium.v1.ProcessState
+	6,  // 20: etronium.v1.ListLordsResponse.lords:type_name -> etronium.v1.Lord
+	2,  // 21: etronium.v1.WatchProcessRequest.event_filter:type_name -> etronium.v1.ProcessEvent.EventType
+	55, // 22: etronium.v1.ExecRemoteRequest.env:type_name -> etronium.v1.ExecRemoteRequest.EnvEntry
+	4,  // 23: etronium.v1.ExecRemoteRequest.resources:type_name -> etronium.v1.ResourceSpec
+	56, // 24: etronium.v1.RestoreRequest.env:type_name -> etronium.v1.RestoreRequest.EnvEntry
+	4,  // 25: etronium.v1.RestoreRequest.resources:type_name -> etronium.v1.ResourceSpec
+	30, // 26: etronium.v1.LordCmd.register:type_name -> etronium.v1.RegisterRequest
+	32, // 27: etronium.v1.LordCmd.heartbeat:type_name -> etronium.v1.HeartbeatRequest
+	47, // 28: etronium.v1.LordCmd.started:type_name -> etronium.v1.ProcessStarted
+	48, // 29: etronium.v1.LordCmd.io:type_name -> etronium.v1.ProcessIo
+	50, // 30: etronium.v1.LordCmd.process_exit:type_name -> etronium.v1.ProcessExit
+	51, // 31: etronium.v1.LordCmd.lazy_death:type_name -> etronium.v1.AcknowledgeLazyDeathRequest
+	43, // 32: etronium.v1.LordCmd.checkpoint_response:type_name -> etronium.v1.CheckpointResponse
+	45, // 33: etronium.v1.LordCmd.restore_response:type_name -> etronium.v1.RestoreResponse
+	57, // 34: etronium.v1.ProcessStarted.at:type_name -> google.protobuf.Timestamp
+	10, // 35: etronium.v1.ProcessIo.chunk:type_name -> etronium.v1.IOChunk
+	31, // 36: etronium.v1.LordEvent.register_ack:type_name -> etronium.v1.RegisterResponse
+	33, // 37: etronium.v1.LordEvent.heartbeat_ack:type_name -> etronium.v1.HeartbeatResponse
+	11, // 38: etronium.v1.LordEvent.spawn:type_name -> etronium.v1.SpawnRequest
+	12, // 39: etronium.v1.LordEvent.kill:type_name -> etronium.v1.KillRequest
+	42, // 40: etronium.v1.LordEvent.checkpoint:type_name -> etronium.v1.CheckpointRequest
+	44, // 41: etronium.v1.LordEvent.restore:type_name -> etronium.v1.RestoreRequest
+	40, // 42: etronium.v1.LordEvent.file_push:type_name -> etronium.v1.FilePushRequest
+	52, // 43: etronium.v1.LordEvent.lazy_death_ack:type_name -> etronium.v1.AcknowledgeLazyDeathResponse
+	1,  // 44: etronium.v1.ProcessExit.reason:type_name -> etronium.v1.ProcessExitReason
+	11, // 45: etronium.v1.SchedulerService.Spawn:input_type -> etronium.v1.SpawnRequest
+	12, // 46: etronium.v1.SchedulerService.Kill:input_type -> etronium.v1.KillRequest
+	14, // 47: etronium.v1.SchedulerService.Wait:input_type -> etronium.v1.WaitRequest
+	15, // 48: etronium.v1.SchedulerService.GetProcess:input_type -> etronium.v1.GetProcessRequest
+	16, // 49: etronium.v1.SchedulerService.ListProcesses:input_type -> etronium.v1.ListProcessesRequest
+	18, // 50: etronium.v1.SchedulerService.Migrate:input_type -> etronium.v1.MigrateRequest
+	20, // 51: etronium.v1.SchedulerService.ListLords:input_type -> etronium.v1.ListLordsRequest
+	22, // 52: etronium.v1.SchedulerService.StreamProcessIO:input_type -> etronium.v1.StreamProcessIORequest
+	23, // 53: etronium.v1.SchedulerService.WatchProcess:input_type -> etronium.v1.WatchProcessRequest
+	24, // 54: etronium.v1.SchedulerService.PullFile:input_type -> etronium.v1.PullFileRequest
+	26, // 55: etronium.v1.SchedulerService.PushFile:input_type -> etronium.v1.PushFileRequest
+	28, // 56: etronium.v1.SchedulerService.InvalidateFileCache:input_type -> etronium.v1.InvalidateFileCacheRequest
+	46, // 57: etronium.v1.LordService.Connect:input_type -> etronium.v1.LordCmd
+	30, // 58: etronium.v1.LordService.Register:input_type -> etronium.v1.RegisterRequest
+	32, // 59: etronium.v1.LordService.Heartbeat:input_type -> etronium.v1.HeartbeatRequest
+	34, // 60: etronium.v1.LordService.ExecRemote:input_type -> etronium.v1.ExecRemoteRequest
+	35, // 61: etronium.v1.LordService.KillRemote:input_type -> etronium.v1.KillRemoteRequest
+	37, // 62: etronium.v1.LordService.StatsRemote:input_type -> etronium.v1.StatsRemoteRequest
+	38, // 63: etronium.v1.LordService.FilePull:input_type -> etronium.v1.FilePullRequest
+	40, // 64: etronium.v1.LordService.FilePush:input_type -> etronium.v1.FilePushRequest
+	42, // 65: etronium.v1.LordService.Checkpoint:input_type -> etronium.v1.CheckpointRequest
+	44, // 66: etronium.v1.LordService.Restore:input_type -> etronium.v1.RestoreRequest
+	51, // 67: etronium.v1.LordService.AcknowledgeLazyDeath:input_type -> etronium.v1.AcknowledgeLazyDeathRequest
+	7,  // 68: etronium.v1.SchedulerService.Spawn:output_type -> etronium.v1.ProcessInfo
+	13, // 69: etronium.v1.SchedulerService.Kill:output_type -> etronium.v1.KillResponse
+	7,  // 70: etronium.v1.SchedulerService.Wait:output_type -> etronium.v1.ProcessInfo
+	7,  // 71: etronium.v1.SchedulerService.GetProcess:output_type -> etronium.v1.ProcessInfo
+	17, // 72: etronium.v1.SchedulerService.ListProcesses:output_type -> etronium.v1.ListProcessesResponse
+	19, // 73: etronium.v1.SchedulerService.Migrate:output_type -> etronium.v1.MigrateResponse
+	21, // 74: etronium.v1.SchedulerService.ListLords:output_type -> etronium.v1.ListLordsResponse
+	10, // 75: etronium.v1.SchedulerService.StreamProcessIO:output_type -> etronium.v1.IOChunk
+	8,  // 76: etronium.v1.SchedulerService.WatchProcess:output_type -> etronium.v1.ProcessEvent
+	25, // 77: etronium.v1.SchedulerService.PullFile:output_type -> etronium.v1.PullFileResponse
+	27, // 78: etronium.v1.SchedulerService.PushFile:output_type -> etronium.v1.PushFileResponse
+	29, // 79: etronium.v1.SchedulerService.InvalidateFileCache:output_type -> etronium.v1.InvalidateFileCacheResponse
+	49, // 80: etronium.v1.LordService.Connect:output_type -> etronium.v1.LordEvent
+	31, // 81: etronium.v1.LordService.Register:output_type -> etronium.v1.RegisterResponse
+	33, // 82: etronium.v1.LordService.Heartbeat:output_type -> etronium.v1.HeartbeatResponse
+	10, // 83: etronium.v1.LordService.ExecRemote:output_type -> etronium.v1.IOChunk
+	36, // 84: etronium.v1.LordService.KillRemote:output_type -> etronium.v1.KillRemoteResponse
+	6,  // 85: etronium.v1.LordService.StatsRemote:output_type -> etronium.v1.Lord
+	39, // 86: etronium.v1.LordService.FilePull:output_type -> etronium.v1.FilePullResponse
+	41, // 87: etronium.v1.LordService.FilePush:output_type -> etronium.v1.FilePushResponse
+	43, // 88: etronium.v1.LordService.Checkpoint:output_type -> etronium.v1.CheckpointResponse
+	45, // 89: etronium.v1.LordService.Restore:output_type -> etronium.v1.RestoreResponse
+	52, // 90: etronium.v1.LordService.AcknowledgeLazyDeath:output_type -> etronium.v1.AcknowledgeLazyDeathResponse
+	68, // [68:91] is the sub-list for method output_type
+	45, // [45:68] is the sub-list for method input_type
+	45, // [45:45] is the sub-list for extension type_name
+	45, // [45:45] is the sub-list for extension extendee
+	0,  // [0:45] is the sub-list for field type_name
 }
 
 func init() { file_etronium_v1_etronium_proto_init() }

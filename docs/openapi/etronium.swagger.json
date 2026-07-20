@@ -1094,6 +1094,29 @@
           "type": "integer",
           "format": "int32",
           "title": "0 если normal exit"
+        },
+        "restartCount": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Phase 3.4: fault tolerance counters. restart_count is the number\nof times this process was respawned because its lord died. V5\nopt-in state-serialized processes can recover from latest snapshot."
+        },
+        "lastError": {
+          "type": "string",
+          "title": "human-readable; set on last respawn failure"
+        },
+        "stateDumpPath": {
+          "type": "string",
+          "description": "Path to last-known application state dump (V5). Empty if process\ndoes not opt in to periodic state serialization."
+        },
+        "maxRestarts": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Max allowed restart count before scheduler gives up and finalizes.\n\n0 = default (10), -1 = unlimited"
+        },
+        "deadlineAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional wall-clock deadline after which restarts are denied."
         }
       },
       "description": "Snapshot процесса — выдаётся через GetProcess/ListProcesses."
@@ -1156,10 +1179,11 @@
         "PROCESS_STATE_PAUSED",
         "PROCESS_STATE_MIGRATING",
         "PROCESS_STATE_EXITED",
-        "PROCESS_STATE_STOPPED"
+        "PROCESS_STATE_STOPPED",
+        "PROCESS_STATE_RESTARTING"
       ],
       "default": "PROCESS_STATE_UNSPECIFIED",
-      "description": "Состояние процесса (POSIX-подобная FSM, не OCI task FSM).\n\nПолная диаграмма:\n  NEW ──► READY ──► RUNNING ──► EXITED\n               │         │\n               │         ├──► PAUSED ──► RUNNING\n               │         │\n               │         ├──► MIGRATING ──► RUNNING (на другом lord'е)\n               │         │\n               │         └──► STOPPED (killed by signal)\n\nREADY = создан и стоит в очереди планировщика на запуск\nRUNNING = исполняется на каком-то lord'е\nPAUSED = freeze (cgroup.freeze=1, SIGSTOP)\nMIGRATING = в процессе переезда на другой lord (CRIU dump/restore)\nEXITED = завершился нормально (exit_code != null)\nSTOPPED = убит сигналом\n\n - PROCESS_STATE_NEW: создан в scheduler'е, ещё не запущен\n - PROCESS_STATE_READY: ожидает placement / запуска\n - PROCESS_STATE_RUNNING: исполняется\n - PROCESS_STATE_PAUSED: заморожен (SIGSTOP + cgroup.freeze)\n - PROCESS_STATE_MIGRATING: в процессе миграции (CRIU)\n - PROCESS_STATE_EXITED: завершился нормально\n - PROCESS_STATE_STOPPED: убит сигналом"
+      "description": "Состояние процесса (POSIX-подобная FSM, не OCI task FSM).\n\nПолная диаграмма:\n  NEW ──► READY ──► RUNNING ──► EXITED\n               │         │\n               │         ├──► PAUSED ──► RUNNING\n               │         │\n               │         ├──► MIGRATING ──► RUNNING (на другом lord'е)\n               │         │\n               │         └──► STOPPED (killed by signal)\n\nREADY = создан и стоит в очереди планировщика на запуск\nRUNNING = исполняется на каком-то lord'е\nPAUSED = freeze (cgroup.freeze=1, SIGSTOP)\nMIGRATING = в процессе переезда на другой lord (CRIU dump/restore)\nEXITED = завершился нормально (exit_code != null)\nSTOPPED = убит сигналом\n\n - PROCESS_STATE_NEW: создан в scheduler'е, ещё не запущен\n - PROCESS_STATE_READY: ожидает placement / запуска\n - PROCESS_STATE_RUNNING: исполняется\n - PROCESS_STATE_PAUSED: заморожен (SIGSTOP + cgroup.freeze)\n - PROCESS_STATE_MIGRATING: в процессе миграции (CRIU)\n - PROCESS_STATE_EXITED: завершился нормально\n - PROCESS_STATE_STOPPED: убит сигналом\n - PROCESS_STATE_RESTARTING: Phase 3.4: lord умер во время выполнения процесса, планировщик\nсейчас занимается респауном на здоровом lord'е. Этот статус\nвидим tenant'у как RESTARTING — короткоживущий."
     },
     "v1PullFileResponse": {
       "type": "object",
@@ -1399,6 +1423,15 @@
         "processId": {
           "type": "string",
           "title": "глобальный ID, присваивается scheduler'ом"
+        },
+        "maxRestarts": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Phase 3.4: fault tolerance options. If max_restarts \u003e 0 and the\nprocess lives on a lord that dies, scheduler respawns on another\nlord automatically. If state_dump_path_hint is set, scheduler\npasses it to the lord which exposes it to the process via\n$ETRONIUM_STATE_DUMP env var (used by V5 opt-in apps).\n\n0 = inherit global default (10)"
+        },
+        "stateDumpPathHint": {
+          "type": "string",
+          "title": "e.g. \"/var/lib/etronium/state/\u003cpid\u003e.json\""
         }
       }
     }

@@ -9,6 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Используем собранный 4.2.
 COPY test/bin/criu /usr/local/bin/criu
 
+# CRIU --exec-cmd helper: jumps out of ephemeral PID namespace into lord's
+# namespace AFTER restore, so target survives CRIU exit / namespace close.
+COPY test/bin/etronium-ns /usr/local/bin/etronium-ns
+
 # Verify CRIU works
 RUN criu --version && criu check 2>&1 | tail -3
 
@@ -17,3 +21,4 @@ COPY bin/lord /usr/local/bin/lord
 COPY bin/etronium /usr/local/bin/etronium
 WORKDIR /root
 CMD ["bash"]
+COPY bin/example-stateful /usr/local/bin/example-stateful
