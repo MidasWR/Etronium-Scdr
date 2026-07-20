@@ -100,7 +100,48 @@ func NewAgent(cfg *Config, logger *slog.Logger) *Agent {
 }
 
 // Run — блокирующий main loop. Открывает stream, шлёт команды, обрабатывает события.
+// При разрыве stream (scheduler restart, network blip) — переподключается
+// через reconnectBackoff с exponential backoff. Это позволяет lord'у
+// пережить scheduler cold start без ручного рестарта.
 func (a *Agent) Run(ctx context.Context) error {
+	const (
+		initialBackoff = 500 * time.Millisecond
+		maxBackoff     = 30 * time.Second
+	)
+	backoff := initialBackoff
+	attempt := 0
+
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		err := a.runOnce(ctx)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		attempt++
+		a.logger.Warn("lord stream disconnected, will reconnect",
+			"attempt", attempt,
+			"backoff", backoff.String(),
+			"err", err,
+		)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-a.shutdownCtx.Done():
+			return a.shutdownCtx.Err()
+		case <-time.After(backoff):
+		}
+		// Exponential backoff capped at maxBackoff.
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
+
+// runOnce — один цикл stream'а. Возвращает ошибку когда stream разрывается.
+func (a *Agent) runOnce(ctx context.Context) error {
 	// 1. Подключаемся к scheduler'у
 	conn, err := grpc.NewClient(a.cfg.SchedulerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -115,7 +156,8 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open connect stream: %w", err)
 	}
-	defer a.shutdownCancel()
+	// НЕ defer'им shutdownCancel — он глобальный для всего Run loop,
+	// его cancel'ит только сам Run при выходе.
 
 	// 3. Получаем аппаратную инфу для Register
 	hw, err := detectHardware(a.cfg)

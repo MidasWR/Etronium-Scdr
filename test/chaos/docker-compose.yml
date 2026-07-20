@@ -37,7 +37,6 @@ services:
     container_name: etronium-lord-active-1
     network_mode: host
     privileged: true
-    tmpfs: /tmp
     command:
       - lord
       - --scheduler=127.0.0.1:50051
@@ -52,7 +51,6 @@ services:
     container_name: etronium-lord-active-2
     network_mode: host
     privileged: true
-    tmpfs: /tmp
     command:
       - lord
       - --scheduler=127.0.0.1:50051
@@ -67,7 +65,6 @@ services:
     container_name: etronium-lord-active-3
     network_mode: host
     privileged: true
-    tmpfs: /tmp
     command:
       - lord
       - --scheduler=127.0.0.1:50051
@@ -83,7 +80,6 @@ services:
     container_name: etronium-lord-queued-4
     network_mode: host
     privileged: true
-    tmpfs: /tmp
     command:
       - lord
       - --scheduler=127.0.0.1:50051
@@ -99,7 +95,6 @@ services:
     container_name: etronium-lord-queued-5
     network_mode: host
     privileged: true
-    tmpfs: /tmp
     command: ["sleep", "infinity"]
     volumes:
       - etronium-state:/tmp/etronium
@@ -110,7 +105,6 @@ services:
     container_name: etronium-lord-queued-6
     network_mode: host
     privileged: true
-    tmpfs: /tmp
     command: ["sleep", "infinity"]
     volumes:
       - etronium-state:/tmp/etronium

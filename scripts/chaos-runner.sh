@@ -16,6 +16,10 @@ echo "[chaos] up: scheduler + 3 active lords + tenant + k3s..."
 docker compose -f "$COMPOSE" up -d scheduler lord-active-1 lord-active-2 lord-active-3 tenant k3s
 
 echo "[chaos] creating queued lord containers (cold, не стартуют)..."
+# Удаляем старые queued (если остались от предыдущего run'а).
+for q in 4 5 6; do
+    docker rm -f "etronium-lord-queued-$q" >/dev/null 2>&1 || true
+done
 docker compose -f "$COMPOSE" --profile queued create
 # Queued lords созданы, но не запущены (sleep infinity). Chaos-runner S03 их поднимет.
 
