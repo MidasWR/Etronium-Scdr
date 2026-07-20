@@ -66,3 +66,18 @@ PGID = PID.
 
 **Статус:** 🤔 Phase 5. Если in-memory потерян, lord'ы должны заново зарегистрироваться, tenant'ы — переподключиться. Процессы RUNNING — orphan'ы, можно их re-discover через heartbeat.
 **Рекомендация:** при старте scheduler помечает все процессы как UNKNOWN, ждёт heartbeat'ов от lord'ов чтобы понять какие живы. TENANT не замечает ничего (retry на любой RPC).
+
+### 21. V5 state-dump shared storage между lord'ами?
+
+**Статус:** 🟡 Phase 3.4. Приложение пишет state в `$ETRONIUM_STATE_DUMP` (обычно
+`/tmp/etronium/state/<pid>.json`). При respawn новый lord читает тот же файл —
+state recovery работает **только если**:
+  (a) state файл на shared volume между lord'ами (NFS / GlusterFS / hostPath);
+  (b) или приложение пишет state во внешний сервис (S3, Postgres, Redis).
+
+**Текущее состояние**: внутри `etronium-test:phase3` образа путь
+`/tmp/etronium/state` монтируется с хоста через `-v` только в e2e-тестах.
+**Production**: lord'ы должны делиться общим путём — иначе state теряется при миграции.
+**Рекомендация**: документировать как требование к deployment'у; возможно,
+добавить опцию `--shared-state-path` в lord config чтобы scheduler
+детектил mismatch и предупреждал.

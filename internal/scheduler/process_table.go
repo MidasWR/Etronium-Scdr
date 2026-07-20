@@ -129,6 +129,18 @@ func (t *ProcessTable) ListByLord(lordID string, filter func(*ProcessEntry) bool
 	return out
 }
 
+// All — snapshot всех entry в текущем byID. Дорого (allocates), но
+// для recovery.go используется редко.
+func (t *ProcessTable) All() []*ProcessEntry {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	out := make([]*ProcessEntry, 0, len(t.byID))
+	for _, e := range t.byID {
+		out = append(out, e)
+	}
+	return out
+}
+
 // UpdateState — атомарно меняет state и будит Wait'еров.
 func (e *ProcessEntry) UpdateState(newState etroniumv1.ProcessState, lordID string, localPID int32) {
 	e.mu.Lock()

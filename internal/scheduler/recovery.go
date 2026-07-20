@@ -52,7 +52,9 @@ func (s *Server) recoverFromLordDisconnect(deadLordID string) {
 	candidates := s.processes.ListByLord(deadLordID, func(e *ProcessEntry) bool {
 		state := e.Info.GetState()
 		return state == etroniumv1.ProcessState_PROCESS_STATE_RUNNING ||
-			state == etroniumv1.ProcessState_PROCESS_STATE_READY
+			state == etroniumv1.ProcessState_PROCESS_STATE_READY ||
+			state == etroniumv1.ProcessState_PROCESS_STATE_PAUSED ||
+			state == etroniumv1.ProcessState_PROCESS_STATE_MIGRATING
 	})
 
 	if len(candidates) == 0 {
@@ -70,7 +72,7 @@ func (s *Server) recoverFromLordDisconnect(deadLordID string) {
 	// Retry loop: pick a lord and respawn. If placement fails (no lord),
 	// wait briefly and retry. We don't crash on the first failure to
 	// avoid losing recovery when bursts of lord deaths happen.
-	const maxAttempts = 30
+	const maxAttempts = 10
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * time.Second)
@@ -112,10 +114,21 @@ func (s *Server) recoverFromLordDisconnect(deadLordID string) {
 		break
 	}
 
+	// Any candidates still in RESTARTING after retry exhaustion get STOPPED.
+	for _, entry := range candidates {
+		if entry.Info.GetState() == etroniumv1.ProcessState_PROCESS_STATE_RESTARTING {
+			entry.mu.Lock()
+			entry.Info.LastError = "no lord available for respawn"
+			entry.mu.Unlock()
+			entry.UpdateState(etroniumv1.ProcessState_PROCESS_STATE_STOPPED, "", 0)
+			entry.UpdateResult(-5, 0) // -5 = "no lord available"
+		}
+	}
+
 	// Final: log summary.
 	s.logger.Info("recovery: complete",
 		"dead_lord_id", deadLordID,
-		"respawned", s.countRespawnedFrom(deadLordID),
+		"candidates_seen", len(candidates),
 	)
 }
 
@@ -128,6 +141,21 @@ func (s *Server) recoverFromLordDisconnect(deadLordID string) {
 // We don't issue kill here — the old lord is gone.
 func (s *Server) respawnProcessOnLord(entry *ProcessEntry, newLordID string) error {
 	processID := entry.Info.GetRef().GetProcessId()
+
+	// Re-check state: a delayed ProcessExit / Kill / manual finalize may
+	// have transitioned the entry between recovery sweep and now.
+	entry.mu.Lock()
+	curState := entry.Info.GetState()
+	if curState == etroniumv1.ProcessState_PROCESS_STATE_EXITED ||
+		curState == etroniumv1.ProcessState_PROCESS_STATE_STOPPED {
+		entry.mu.Unlock()
+		s.logger.Debug("recovery: entry already finalized, skipping respawn",
+			"process_id", processID,
+			"state", curState.String(),
+		)
+		return nil
+	}
+	entry.mu.Unlock()
 
 	// Honour max_restarts. If exceeded, mark STOPPED with error.
 	maxR := entry.Info.GetMaxRestarts()
@@ -173,11 +201,11 @@ func (s *Server) respawnProcessOnLord(entry *ProcessEntry, newLordID string) err
 	}
 
 	if err := s.SendSpawn(newLordID, req); err != nil {
-		entry.UpdateState(etroniumv1.ProcessState_PROCESS_STATE_STOPPED, "", 0)
-		entry.UpdateResult(-2, 0) // -2 = "lord disconnected, respawn failed"
 		entry.mu.Lock()
 		entry.Info.LastError = fmt.Sprintf("respawn on %s: %v", newLordID, err)
 		entry.mu.Unlock()
+		entry.UpdateState(etroniumv1.ProcessState_PROCESS_STATE_STOPPED, "", 0)
+		entry.UpdateResult(-2, 0) // -2 = "lord disconnected, respawn failed"
 		return err
 	}
 
@@ -191,6 +219,9 @@ func (s *Server) respawnProcessOnLord(entry *ProcessEntry, newLordID string) err
 			s.logger.Warn("recovery: respawn ack timeout",
 				"process_id", processID,
 			)
+			entry.mu.Lock()
+			entry.Info.LastError = "respawn ack timeout (>30s)"
+			entry.mu.Unlock()
 			entry.UpdateState(etroniumv1.ProcessState_PROCESS_STATE_STOPPED, "", 0)
 			entry.UpdateResult(-3, 0) // -3 = "respawn ack timeout"
 		}
@@ -199,14 +230,3 @@ func (s *Server) respawnProcessOnLord(entry *ProcessEntry, newLordID string) err
 	return nil
 }
 
-func (s *Server) countRespawnedFrom(deadLordID string) int {
-	count := 0
-	for _, e := range s.processes.ListByLord(deadLordID, nil) {
-		if e.Info.GetRestartCount() > 0 &&
-			e.Info.GetRef().GetLordId() != deadLordID &&
-			e.Info.GetState() == etroniumv1.ProcessState_PROCESS_STATE_RUNNING {
-			count++
-		}
-	}
-	return count
-}
