@@ -26,7 +26,7 @@ import (
 
 func main() {
 	var (
-		addr     = flag.String("addr", ":50051", "gRPC listen address")
+		addr     = flag.String("addr", ":50061", "gRPC listen address")
 		logLevel = flag.String("log", "info", "log level (debug|info|warn|error)")
 	)
 	flag.Parse()
@@ -38,7 +38,7 @@ func main() {
 		logger.Error("load config", "err", err)
 		os.Exit(1)
 	}
-	if *addr != ":50051" {
+	if *addr != ":50061" {
 		cfg.ListenAddr = *addr
 	}
 

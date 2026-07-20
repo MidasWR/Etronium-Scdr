@@ -376,7 +376,7 @@ func S03LordLag(ctx context.Context) ScenarioResult {
 			"-e", "LORD_HOSTNAME="+containerName,
 			"etronium-test:chaos",
 			"lord",
-			"--scheduler=127.0.0.1:50051",
+			"--scheduler=127.0.0.1:50061",
 			"--advertise-cpu=3200",
 			"--advertise-mem=4294967296",
 			"--log=info")
@@ -424,24 +424,25 @@ func S04NetPartition(ctx context.Context) ScenarioResult {
 	beforeRunning := strings.Count(beforeList, "PROCESS_STATE_RUNNING")
 	log("    pre-partition: %d RUNNING processes", beforeRunning)
 
-	// Block traffic to scheduler from lord-active-2 by port (gRPC :50051).
+	// Block traffic to scheduler from lord-active-2 by port (gRPC :50061).
 	if _, err := dockerExec("etronium-lord-active-2", "iptables", "-A", "OUTPUT",
-		"-p", "tcp", "--dport", "50051", "-j", "REJECT", "--reject-with", "tcp-reset"); err != nil {
+		"-p", "tcp", "--dport", "50061", "-j", "REJECT", "--reject-with", "tcp-reset"); err != nil {
 		r.Error = fmt.Sprintf("iptables add: %v", err)
 		return r
 	}
-	log("    partitioned lord-active-2 from scheduler port 50051 (REJECT/RST)")
+	log("    partitioned lord-active-2 from scheduler port 50061 (REJECT/RST)")
 
 	// Wait 30s for heartbeat TTL + sweeper + recovery.
 	time.Sleep(30 * time.Second)
 
 	// Restore network.
 	_, _ = dockerExec("etronium-lord-active-2", "iptables", "-D", "OUTPUT",
-		"-p", "tcp", "--dport", "50051", "-j", "REJECT", "--reject-with", "tcp-reset")
+		"-p", "tcp", "--dport", "50061", "-j", "REJECT", "--reject-with", "tcp-reset")
 	log("    restored network")
 
-	// Wait до 30s для recovery (respawn на другие lord'ы).
-	deadline := time.Now().Add(30 * time.Second)
+	// Wait до 60s для recovery (respawn на другие lord'ы, включая retry при
+	// race с auto-reconnect target_lord).
+	deadline := time.Now().Add(60 * time.Second)
 	afterRunning := 0
 	for time.Now().Before(deadline) {
 		afterList, _ := etroniumCmd("process", "list")
@@ -592,7 +593,7 @@ func S08ColdStart(ctx context.Context) ScenarioResult {
 	}
 
 	// Wait for scheduler ready.
-	if err := waitForScheduler(ctx, ":50051", 30*time.Second); err != nil {
+	if err := waitForScheduler(ctx, ":50061", 30*time.Second); err != nil {
 		r.Error = fmt.Sprintf("scheduler not ready: %v", err)
 		return r
 	}
@@ -913,7 +914,7 @@ func main() {
 	defer logFile.Close()
 
 	report.StartedAt = time.Now()
-	report.Scheduler = "127.0.0.1:50051"
+	report.Scheduler = "127.0.0.1:50061"
 	report.ClusterInfo = map[string]string{}
 
 	log("CHAOS RUNNER starting")
@@ -943,7 +944,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := waitForScheduler(ctx, ":50051", 60*time.Second); err != nil {
+	if err := waitForScheduler(ctx, ":50061", 60*time.Second); err != nil {
 		log("FATAL: %v", err)
 		os.Exit(1)
 	}

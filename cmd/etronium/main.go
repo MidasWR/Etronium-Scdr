@@ -39,7 +39,7 @@ func main() {
 	}
 
 	rootCmd.PersistentFlags().StringVar(&schedulerAddr, "scheduler",
-		envOr("ETRONIUM_SCHEDULER", "localhost:50051"), "scheduler gRPC address")
+		envOr("ETRONIUM_SCHEDULER", "localhost:50061"), "scheduler gRPC address")
 	rootCmd.PersistentFlags().StringVar(&tenantID, "tenant",
 		envOr("ETRONIUM_TENANT", "anonymous"), "tenant id (арендатор)")
 	rootCmd.PersistentFlags().BoolVar(&outputJSON, "json", false, "JSON output")

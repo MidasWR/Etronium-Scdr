@@ -15,7 +15,7 @@ services:
     container_name: etronium-mini-scheduler
     network_mode: host
     privileged: true
-    command: ["scheduler", "--addr=:50051", "--log=info", ""]
+    command: ["scheduler", "--addr=:50061", "--log=info", ""]
     environment:
       - SCHEDULER_PLACEMENT=weighted
       - SCHEDULER_WAL_PATH=/tmp/etronium/scheduler.wal
@@ -30,7 +30,7 @@ services:
     tmpfs: /tmp
     command:
       - lord
-      - --scheduler=127.0.0.1:50051
+      - --scheduler=127.0.0.1:50061
       - --advertise-cpu=3200
       - --advertise-mem=4294967296
       - --log=info
@@ -47,7 +47,7 @@ services:
     tmpfs: /tmp
     command:
       - lord
-      - --scheduler=127.0.0.1:50051
+      - --scheduler=127.0.0.1:50061
       - --advertise-cpu=3200
       - --advertise-mem=4294967296
       - --log=info
@@ -64,7 +64,7 @@ services:
     tmpfs: /tmp
     command:
       - lord
-      - --scheduler=127.0.0.1:50051
+      - --scheduler=127.0.0.1:50061
       - --advertise-cpu=3200
       - --advertise-mem=4294967296
       - --log=info

@@ -20,7 +20,7 @@ import (
 
 func main() {
 	var (
-		schedulerAddr = flag.String("scheduler", envOr("SCHEDULER_ADDR", "localhost:50051"), "scheduler gRPC address")
+		schedulerAddr = flag.String("scheduler", envOr("SCHEDULER_ADDR", "localhost:50061"), "scheduler gRPC address")
 		hostname      = flag.String("hostname", "", "override hostname (default: os.Hostname)")
 		logLevel      = flag.String("log", "info", "log level (debug|info|warn|error)")
 		logFormat     = flag.String("log-format", "tint", "log format (tint|json)")

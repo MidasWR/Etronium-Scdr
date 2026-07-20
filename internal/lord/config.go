@@ -9,7 +9,7 @@ import (
 
 // Config — runtime config lord'а.
 type Config struct {
-	SchedulerAddr      string // scheduler gRPC endpoint, default "localhost:50051"
+	SchedulerAddr      string // scheduler gRPC endpoint, default "localhost:50061"
 	Hostname           string // опционально, иначе os.Hostname()
 	HeartbeatSec       int    // интервал heartbeat, default 10
 	LogLevel           string
@@ -21,7 +21,7 @@ type Config struct {
 func LoadConfig() (*Config, error) {
 	hostname, _ := os.Hostname()
 	c := &Config{
-		SchedulerAddr: getEnv("SCHEDULER_ADDR", "localhost:50051"),
+		SchedulerAddr: getEnv("SCHEDULER_ADDR", "localhost:50061"),
 		Hostname:      getEnv("LORD_HOSTNAME", hostname),
 		HeartbeatSec:  10,
 		LogLevel:      getEnv("LORD_LOG_LEVEL", "info"),

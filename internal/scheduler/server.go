@@ -130,6 +130,12 @@ func (s *Server) Shutdown(ctx context.Context, drainTimeout time.Duration) error
 
 // Spawn — основная точка входа. Создаёт процесс и запускает на lord'е.
 func (s *Server) Spawn(ctx context.Context, req *etroniumv1.SpawnRequest) (*etroniumv1.ProcessInfo, error) {
+	// NB: для отладки — логируем кто звал.
+	if peer, ok := peer.FromContext(ctx); ok {
+		s.logger.Info("Spawn RPC", "peer", peer.Addr.String(), "tenant", req.TenantId, "exec", req.ExecPath, "argv", req.Argv)
+	} else {
+		s.logger.Info("Spawn RPC (no peer)", "tenant", req.TenantId, "exec", req.ExecPath, "argv", req.Argv)
+	}
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id required")
 	}

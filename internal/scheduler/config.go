@@ -12,7 +12,7 @@ import (
 
 // Config — runtime config scheduler'а.
 type Config struct {
-	ListenAddr     string        // gRPC bind address, default ":50051"
+	ListenAddr     string        // gRPC bind address, default ":50061"
 	SharedToken    string        // pre-shared token для auth (опционально Phase 0.5)
 	HeartbeatTTL   time.Duration // mark unhealthy после, default 30s
 	PlacementAlgo  string        // "trivial" (Phase 0) или "weighted" (Phase 2+)
@@ -22,7 +22,7 @@ type Config struct {
 // LoadConfig — грузит из env с дефолтами.
 func LoadConfig() (*Config, error) {
 	c := &Config{
-		ListenAddr:    getEnv("SCHEDULER_LISTEN", ":50051"),
+		ListenAddr:    getEnv("SCHEDULER_LISTEN", ":50061"),
 		SharedToken:   getEnv("ETRONIUM_SHARED_TOKEN", ""),
 		PlacementAlgo: getEnv("SCHEDULER_PLACEMENT", "trivial"),
 		LogLevel:      getEnv("SCHEDULER_LOG_LEVEL", "info"),

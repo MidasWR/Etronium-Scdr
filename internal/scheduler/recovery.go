@@ -55,7 +55,7 @@ func (s *Server) onLordDisconnect(deadLordID string) {
 // lord_id каждый раз, recovery видит "новый disconnect" и пытается
 // respawn, что overload'ит target_lord).
 func (s *Server) recoverFromLordDisconnect(deadLordID string) {
-	const recoveryDebounce = 5 * time.Second
+	const recoveryDebounce = 10 * time.Second
 
 	s.lastRecoveryMu.Lock()
 	last, ok := s.lastRecoveryAt[deadLordID]
@@ -131,8 +131,17 @@ func (s *Server) recoverFromLordDisconnect(deadLordID string) {
 		// We stop after first successful attempt; subsequent ones are
 		// no-op because process_table entries are no longer RUNNING on
 		// deadLord once they've been respawned.
-		_ = succeeded
-		break
+		// BUT if zero respawns succeeded (target_lord session was stale and
+		// SendSpawn returned "lord X not connected"), retry — pick a
+		// different target_lord on next iteration. Without this, recovery
+		// silently fails and processes are lost.
+		if succeeded > 0 {
+			break
+		}
+		s.logger.Info("recovery: retrying with fresh target_lord",
+			"dead_lord_id", deadLordID,
+			"attempt", attempt,
+		)
 	}
 
 	// Any candidates still in RESTARTING after retry exhaustion get STOPPED.

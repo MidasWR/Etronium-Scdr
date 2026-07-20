@@ -12,6 +12,17 @@ docker build -q -t "$IMG" -f test/Dockerfile.runtime . >/dev/null
 echo "[chaos] tearing down any prior run..."
 docker compose -f "$COMPOSE" down --remove-orphans -v >/dev/null 2>&1 || true
 
+echo "[chaos] checking scheduler port :50061 is free..."
+if ss -tnlp 2>/dev/null | grep -q ":50061"; then
+    existing=$(ss -tnlp 2>/dev/null | grep ":50061" | grep -v 'docker-proxy' || true)
+    if [ -n "$existing" ]; then
+        echo "[chaos] FATAL: port :50061 is in use by another process — cross-project interference likely"
+        echo "$existing"
+        exit 2
+    fi
+fi
+echo "[chaos] port :50061 is free"
+
 echo "[chaos] up: scheduler + 3 active lords + tenant + k3s..."
 docker compose -f "$COMPOSE" up -d scheduler lord-active-1 lord-active-2 lord-active-3 tenant k3s
 
@@ -23,9 +34,9 @@ done
 docker compose -f "$COMPOSE" --profile queued create
 # Queued lords созданы, но не запущены (sleep infinity). Chaos-runner S03 их поднимет.
 
-echo "[chaos] waiting for scheduler to listen on :50051..."
+echo "[chaos] waiting for scheduler to listen on :50061..."
 for i in {1..30}; do
-    if ss -tnlp 2>/dev/null | grep -q ":50051"; then
+    if ss -tnlp 2>/dev/null | grep -q ":50061"; then
         echo "[chaos] scheduler listening after ${i}s"
         break
     fi
