@@ -1,0 +1,60 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build + release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean --skip=publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attach installer.sh + cheatsheet
+        run: |
+          cp scripts/installer.sh dist/installer.sh
+          cp docs/CHEATSHEET.md dist/CHEATSHEET.md 2>/dev/null || true
+          chmod +x dist/installer.sh
+          ls -la dist/
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Etronium ${{ github.ref_name }}"
+          body: |
+            ## Etronium ${{ github.ref_name }}
+
+            One-command install via `installer.sh`:
+            ```bash
+            curl -fsSL https://github.com/midas/Etronium-Scdr/releases/download/${{ github.ref_name }}/installer.sh | sudo bash -s -- lord --scheduler=etronium.example.com:51061
+            ```
+
+            See [OPS-GUIDE.md](https://github.com/midas/Etronium-Scdr/blob/main/docs/OPS-GUIDE.md) for full reference.
+          files: |
+            dist/etronium-*.tar.gz
+            dist/checksums.txt
+            dist/installer.sh
+            dist/CHEATSHEET.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

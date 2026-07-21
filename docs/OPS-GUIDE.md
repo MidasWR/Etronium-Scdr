@@ -12,6 +12,8 @@ a new lord into the fleet, tenant using their VPS via `tenant` CLI.
 
 ## 0. Quick start (5-minute demo)
 
+### Local demo (single machine, dev only)
+
 ```bash
 git clone https://github.com/midas/Etronium-Scdr.git
 cd Etronium-Scdr
@@ -23,6 +25,30 @@ cat /sys/kernel/sched_ext/state                # → enabled
 ./scripts/mvp/demo-pm.sh                       # 5-minute PM demo
 ./scripts/mvp/down.sh                          # tear down
 ```
+
+### Multi-machine (production-like)
+
+```bash
+# On the control-plane host (machine 1):
+curl -fsSL https://github.com/midas/Etronium-Scdr/releases/latest/download/installer.sh | \
+  sudo bash -s -- scheduler
+
+# On every lord host (machines 2..N):
+curl -fsSL https://github.com/midas/Etronium-Scdr/releases/latest/download/installer.sh | \
+  sudo bash -s -- lord \
+    --scheduler=etronium.example.com:51061 \
+    --hostname=my-laptop \
+    --advertise-cpu=4
+
+# On tenant laptops:
+curl -fsSL https://github.com/midas/Etronium-Scdr/releases/latest/download/installer.sh | \
+  bash -s -- tenant \
+    --scheduler=etronium.example.com:51061
+```
+
+That's the entire onboarding flow. No git clone, no build, no
+editing YAML, no certificate management. The installer writes a
+systemd unit and starts the service.
 
 This brings up **1 frontend (scheduler)**, **5 lords**, **2 tenants**
 on a single host. All containers share the host kernel via

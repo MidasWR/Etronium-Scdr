@@ -1,0 +1,83 @@
+# goreleaser config for Etronium-Scdr userspace daemon binaries.
+# Cross-compiles scheduler, lord, etronium, schedulerd for linux/amd64 + arm64.
+
+project_name: etronium
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: scheduler
+    main: ./cmd/scheduler
+    binary: scheduler
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+      - -ldflags=-s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+  - id: lord
+    main: ./cmd/lord
+    binary: lord
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+      - -ldflags=-s -w -X main.version={{.Version}}
+  - id: etronium
+    main: ./cmd/etronium
+    binary: tenant
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+      - -ldflags=-s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    name_template: >-
+      etronium-{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}
+    format_overrides:
+      - goos: linux
+        format: tar.gz
+    files:
+      - README.md
+      - LICENSE*
+      - docs/CHEATSHEET.md
+      - scripts/installer.sh
+      - scripts/etronium-exit
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  name_template: "{{ .Version }}-next"
+
+release:
+  prerelease: auto
+  draft: false
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - 'merge conflict'

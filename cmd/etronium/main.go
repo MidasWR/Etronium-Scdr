@@ -46,6 +46,9 @@ func main() {
 
 	rootCmd.AddCommand(processCmd())
 	rootCmd.AddCommand(lordsCmd())
+	rootCmd.AddCommand(tokenCmd())
+	rootCmd.AddCommand(statusCmd())
+	rootCmd.AddCommand(formatFleetCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -360,4 +363,128 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// token / status / format-fleet subcommands (one-command surface area)
+
+func tokenCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "token",
+		Short: "Manage tenant access tokens (Phase 3+ stub)",
+	}
+	c.AddCommand(tokenNewCmd(), tokenListCmd(), tokenRevokeCmd())
+	return c
+}
+
+func tokenNewCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "new",
+		Short: "Issue a new tenant token (Phase 3+).",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Fprintln(os.Stderr, "tenant token new: not implemented in Phase 1 (MVP runs without auth).")
+		},
+	}
+}
+
+func tokenListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List tenant tokens (Phase 3+).",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Fprintln(os.Stderr, "tenant token list: not implemented in Phase 1.")
+		},
+	}
+}
+
+func tokenRevokeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "revoke",
+		Short: "Revoke a tenant token (Phase 3+).",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Fprintln(os.Stderr, "tenant token revoke: not implemented in Phase 1.")
+		},
+	}
+}
+
+// statusCmd — fleet status from scheduler side. Read-only JSON dump.
+func statusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show fleet status from scheduler (lords + processing).",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			client, conn, err := dial(ctx)
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+			resp, err := client.ListLords(ctx, &etroniumv1.ListLordsRequest{})
+			if err != nil {
+				return err
+			}
+			lords := resp.GetLords()
+			out := map[string]interface{}{
+				"scheduler": schedulerAddr,
+				"tenant":    tenantID,
+				"lords":     lords,
+				"healthy":   countHealthy(lords),
+			}
+			if outputJSON {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				_ = enc.Encode(out)
+				return nil
+			}
+			h := out["healthy"].(int)
+			fmt.Printf("scheduler: %s\n", schedulerAddr)
+			fmt.Printf("lords:     %d (%d healthy)\n", len(lords), h)
+			for i, l := range lords {
+				fmt.Printf("  [%d] %-20s advertised_cpu=%d host=%s\n",
+					i, l.GetHostname(), l.GetAdvertisedCpuShares(), l.GetOs())
+			}
+			return nil
+		},
+	}
+}
+
+// countHealthy — helper for statusCmd.
+func countHealthy(lords []*etroniumv1.Lord) int {
+	n := 0
+	for _, l := range lords {
+		if l.GetHealthy() {
+			n++
+		}
+	}
+	return n
+}
+
+// formatFleetCmd — humanize the JSON fleet dump (called by installer.sh status).
+func formatFleetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "format-fleet",
+		Short: "Read JSON from stdin, print human fleet summary.",
+		Run: func(_ *cobra.Command, _ []string) {
+			var lords []*etroniumv1.Lord
+			if err := json.NewDecoder(os.Stdin).Decode(&lords); err != nil {
+				fmt.Fprintf(os.Stderr, "decode: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("%-20s %-12s %-10s %s\n", "HOSTNAME", "CPU-SHARES", "STATUS", "LORD-ID")
+			for _, l := range lords {
+				fmt.Printf("%-20s %-12d %-10s %s\n",
+					l.GetHostname(), l.GetAdvertisedCpuShares(),
+					boolStr(l.GetHealthy(), "healthy", "down"),
+					l.GetLordId())
+			}
+		},
+	}
+}
+
+func boolStr(b bool, t, f string) string {
+	if b {
+		return t
+	}
+	return f
 }
