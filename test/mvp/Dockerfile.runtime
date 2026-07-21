@@ -16,6 +16,7 @@ COPY bin/example-stateful     /usr/local/bin/example-stateful
 # schedulerd loads the BPF object into host kernel via bpftool struct_ops register.
 COPY bin/schedulerd          /usr/local/bin/schedulerd
 COPY bin/bpf/sched_ext_final.o   /opt/etronium/bpf/sched_ext_final.o
+COPY bin/etr_maps.o            /opt/etronium/bpf/etr_maps.o
 
 # We need bpftool + libbpf inside the image (for schedulerd daemon).
 # bpftool is provided by linux-tools-common + linux-tools-$(uname -r) on host.
