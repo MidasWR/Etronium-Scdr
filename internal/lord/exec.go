@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+	"unsafe"
 
 	etroniumv1 "github.com/midas/Etronium-Scdr/internal/gen/etronium/v1"
 )
@@ -81,6 +82,19 @@ func (a *Agent) handleSpawn(ctx context.Context, req *etroniumv1.SpawnRequest) e
 	if err := cmd.Start(); err != nil {
 		a.sendProcessExit(processID, -1, 0, 0, 0)
 		return fmt.Errorf("start: %w", err)
+	}
+
+	// Phase 5: apply SCHED_EXT policy to spawned process.
+	// Without this, the task runs as CFS — BPF scheduler ignores it.
+	// SCHED_EXT = 7 in kernel 7.0+ uapi/linux/sched.h (not in glibc yet).
+	if err := applySchedExt(cmd.Process.Pid); err != nil {
+		// Soft-fail: continue even if SCHED_EXT apply fails.
+		// Process still runs as CFS — won't route via scx but won't crash.
+		a.logger.Warn("SCHED_EXT apply failed (process runs as CFS)",
+			"process_id", processID, "pid", cmd.Process.Pid, "err", err)
+	} else {
+		a.logger.Info("applied SCHED_EXT policy",
+			"process_id", processID, "pid", cmd.Process.Pid)
 	}
 
 	// cgroup attach (Phase 1) — перемещаем PID в slice, применяем ResourceSpec.
@@ -307,4 +321,24 @@ func max32(a, b int32) int32 {
 		return a
 	}
 	return b
+}
+
+
+// applySchedExt — set SCHED_EXT policy on a child PID via raw syscall.
+// SCHED_EXT = 7 (kernel 7.0+). Not yet exported via glibc sched.h.
+func applySchedExt(pid int) error {
+	const SCHED_EXT = 7
+	param := struct {
+		sched_priority int
+	}{}
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_SCHED_SETSCHEDULER,
+		uintptr(pid),
+		uintptr(SCHED_EXT),
+		uintptr(unsafe.Pointer(&param)),
+	)
+	if errno != 0 {
+		return fmt.Errorf("sched_setscheduler(pid=%d, SCHED_EXT): %w", pid, errno)
+	}
+	return nil
 }
