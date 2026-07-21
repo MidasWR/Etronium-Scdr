@@ -74,6 +74,124 @@ gRPC API в [`proto/etronium/v1/etronium.proto`](./proto/etronium/v1/etronium.pr
 
 Не работает: live migration (CRIU) — отвергнута на kernel 6.17. Fault tolerance через V4+V5 вместо неё.
 
+## CLI Reference
+
+Three binaries. Scheduler + Lord are daemons; `tenant` is the
+end-user CLI installed on every machine that wants to talk to the
+fleet.
+
+### `tenant` — арендаторский CLI (Go, cobra)
+
+Global flags:
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--scheduler` | `localhost:51061` | scheduler gRPC address (env: `SCHEDULER_ADDR`) |
+| `--tenant` | `anonymous` | tenant id |
+| `--json` | false | machine-readable output |
+
+Subcommands:
+
+| Subcommand | Purpose |
+|---|---|
+| `tenant lords` | List registered lords (`hostname`, `advertised_cpu_shares`, `last_heartbeat`, …) |
+| `tenant status` | Fleet summary: lords count + healthy count + scheduler address |
+| `tenant process spawn` | Spawn a new process (`--exec`, `--arg ...`, `--resources`, `--prefer-lord`, `--max-restarts`, `--state-dump`) |
+| `tenant process list` | List this tenant's processes (`--running` filter) |
+| `tenant process get` | Get state of one process (`--local-pid`) |
+| `tenant process wait` | Block until process exits (returns exit code) |
+| `tenant process kill` | Send signal (default `SIGTERM`, `--signal=…`) |
+| `tenant process migrate` | Re-spawn on a different lord (fault-tolerant restart, not CRIU) |
+| `tenant token new` | Mint a tenant access token (Phase 3+ stub) |
+| `tenant token list` | List active tokens (Phase 3+ stub) |
+| `tenant token revoke` | Revoke a token (Phase 3+ stub) |
+| `tenant format-fleet` | Pretty-print `lords --json` output as a table |
+| `tenant version` | Print version + commit |
+
+Examples:
+
+```bash
+# Spawn a 60-second sleep on the fleet:
+tenant process spawn --exec=/bin/sleep --arg=60
+
+# Spawn with explicit CPU/mem hint:
+tenant process spawn --exec=/bin/sleep --arg=300 \
+  --resources='{"cpu_shares":100,"mem_limit_bytes":104857600}'
+
+# Spawn with restart budget + state-dump for fault tolerance:
+tenant process spawn \
+  --exec=./bin/example-stateful \
+  --state-dump=/tmp/etronium/state/demo.json \
+  --max-restarts=10
+
+# Migrate to a specific lord (soft affinity):
+tenant process spawn --exec=/bin/sleep --arg=600 \
+  --prefer-lord=lord-school-C
+
+# Watch fleet + processes:
+tenant status --json | jq .
+tenant process list --running
+
+# Wait for completion:
+tenant process wait --local-pid=<ulid>     # exit code 0..N
+```
+
+### `lord` — donor machine (Go daemon)
+
+The `lord` binary opens a long-lived bidi gRPC stream to the scheduler,
+auto-registers on connect, and accepts Exec/Kill/Checkpoint/Restore
+commands. It applies `SCHED_EXT` (policy=7) to every spawned child so
+the BPF scheduler can dispatch lord-side tasks per-cgroup.
+
+Flags:
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--scheduler` | `localhost:50061` | scheduler gRPC address (env: `SCHEDULER_ADDR`) |
+| `--hostname` | `os.Hostname()` | override hostname |
+| `--advertise-cpu` | 0 | NUMA-overcommit: CPU shares to advertise (0 = physical count) |
+| `--advertise-mem` | 0 | NUMA-overcommit: memory bytes to advertise (0 = physical) |
+| `--log` | info | debug/info/warn/error |
+| `--log-format` | tint | tint (TTY) or json (production) |
+| `--version` | — | print version and exit |
+
+```bash
+# Bare-metal example (recommended via installer.sh):
+sudo /usr/local/bin/installer.sh lord \
+  --scheduler=etronium.example.com:51061 \
+  --hostname=my-laptop \
+  --advertise-cpu=4
+```
+
+### `scheduler` — control plane (Go daemon)
+
+Two modes: long-running daemon (`scheduler serve` is implicit), and
+operator subcommands that exit after one operation.
+
+Daemon flags:
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--addr` | `:51061` | gRPC listen address (env: `SCHEDULER_LISTEN`) |
+| `--log` | info | log level |
+
+Operator subcommands (positional, before `--addr`):
+
+| Subcommand | Purpose |
+|---|---|
+| `scheduler stats` | Dump SCHED_EXT kernel state + BPF map sizes (per-lord counters) |
+| `scheduler stats --json` | Machine-readable for Prometheus |
+| `scheduler migrate --hostname=X --shares=N` | Update `etr_lord_cpus` BPF map live (no lord restart) |
+| `scheduler --version` / `scheduler version` | Print version |
+
+```bash
+# Live rebalance (run anywhere with gRPC access):
+scheduler migrate --hostname=lord-school-A --shares=8
+scheduler stats | jq '.lords[] | select(.hostname=="lord-school-A")'
+```
+
+Full tenant reference: [`docs/TENANT-USAGE.md`](./docs/TENANT-USAGE.md).
+
 ## Quick Start (5 минут)
 
 ```bash
