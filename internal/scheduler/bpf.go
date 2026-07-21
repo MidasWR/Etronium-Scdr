@@ -120,3 +120,25 @@ func AssignTaskBPF(ctx context.Context, taskPID uint32, lordID uint32, logger *s
 	}
 	return nil
 }
+
+// UpdateLordCPUMask — Phase 3.5 live migration: change lord's CPU mask
+// in BPF map. BPF select_cpu re-evaluates first_cpu_in_mask on next wakeup
+// → tasks migrate to new CPU without explicit lock.
+//
+// Returns the new mask for caller logging.
+func UpdateLordCPUMask(ctx context.Context, hostname string, newShares uint32, logger *slog.Logger) (uint64, error) {
+	lordID := LordIDFromHostname(hostname)
+	newMask := LordCPUMaskFromShares(newShares)
+
+	cpusMap, err := openPin(BPFMaps.LordCpus)
+	if err != nil {
+		return 0, fmt.Errorf("open etr_lord_cpus: %w", err)
+	}
+	if err := cpusMap.Put(lordID, newMask); err != nil {
+		return 0, fmt.Errorf("put etr_lord_cpus: %w", err)
+	}
+	logger.Info("lord CPU mask updated (live migration trigger)",
+		"hostname", hostname, "lord_id", lordID,
+		"new_cpu_mask", fmt.Sprintf("0x%x", newMask), "new_shares", newShares)
+	return newMask, nil
+}

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -25,6 +26,12 @@ import (
 )
 
 func main() {
+	// Phase 3.5 subcommands: "scheduler serve" (default) or "scheduler migrate".
+	if len(os.Args) >= 2 && os.Args[1] == "migrate" {
+		migrateCmd(os.Args[2:])
+		return
+	}
+
 	var (
 		addr     = flag.String("addr", ":50061", "gRPC listen address")
 		logLevel = flag.String("log", "info", "log level (debug|info|warn|error)")
@@ -154,4 +161,31 @@ func newLogger(level string) *slog.Logger {
 		lvl = slog.LevelInfo
 	}
 	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}))
+}
+
+
+// migrateCmd — Phase 3.5 live migration: update lord CPU mask in BPF map.
+// Triggers scx select_cpu to re-evaluate first_cpu_in_mask on next wakeup.
+//
+// Usage:
+//   scheduler migrate --hostname <hostname> --shares <N>
+func migrateCmd(args []string) {
+	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+	hostname := fs.String("hostname", "", "lord hostname (required)")
+	shares := fs.Uint("shares", 1, "new advertised CPU shares (1..16)")
+	_ = fs.Parse(args)
+	if *hostname == "" {
+		fmt.Fprintln(os.Stderr, "scheduler migrate: --hostname is required")
+		fs.Usage()
+		os.Exit(2)
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	newMask, err := scheduler.UpdateLordCPUMask(ctx, *hostname, uint32(*shares), logger)
+	if err != nil {
+		logger.Error("live migration failed", "err", err)
+		os.Exit(1)
+	}
+	fmt.Printf("OK hostname=%s shares=%d new_cpu_mask=0x%x\n", *hostname, *shares, newMask)
 }
