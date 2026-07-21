@@ -142,3 +142,6 @@ func UpdateLordCPUMask(ctx context.Context, hostname string, newShares uint32, l
 		"new_cpu_mask", fmt.Sprintf("0x%x", newMask), "new_shares", newShares)
 	return newMask, nil
 }
+
+// StatsMap — pinned stats map for live BPF counters.
+var StatsMap = "/sys/fs/bpf/etronium/maps/etr_lord_stats"
