@@ -235,6 +235,8 @@ func (sess *lordSession) recvLoop(s *Server) error {
 			s.handleIo(sess, c.Io)
 		case *etroniumv1.LordCmd_ProcessExit:
 			s.handleProcessExit(sess, c.ProcessExit)
+		case *etroniumv1.LordCmd_WriteStdinAck:
+			s.deliverWriteStdinAck(c.WriteStdinAck)
 		case *etroniumv1.LordCmd_LazyDeath:
 			s.lords.SetDrain(sess.lordID)
 			// NB: НЕблокирующий send (см. heartbeat ack).

@@ -74,14 +74,16 @@ type localProcess struct {
 
 // localCmd — обёртка над *exec.Cmd с I/O capture.
 type localCmd struct {
-	execPath string
-	argv     []string
-	env      []string
-	workdir  string
+	mu          sync.Mutex // protects stdinClosed
+	execPath    string
+	argv        []string
+	env         []string
+	workdir     string
 
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
-	stderr io.ReadCloser
+	stdin       io.WriteCloser
+	stdout      io.ReadCloser
+	stderr      io.ReadCloser
+	stdinClosed bool // set after first EOF or pipe error
 
 	done chan struct{}
 }
@@ -327,10 +329,86 @@ func (a *Agent) handleEvent(ctx context.Context, ev *etroniumv1.LordEvent) error
 		return errors.New("lazy death requested")
 	case *etroniumv1.LordEvent_SetDrain:
 		return a.handleSetDrain(ctx, e.SetDrain)
+	case *etroniumv1.LordEvent_WriteStdin:
+		return a.handleWriteStdin(e.WriteStdin)
 	case *etroniumv1.LordEvent_FilePush:
 		a.logger.Warn("file push not implemented in Phase 0")
 	default:
 		a.logger.Warn("unknown event", "type", fmt.Sprintf("%T", e))
+	}
+	return nil
+}
+
+// handleWriteStdin — Phase 6: write a stdin chunk into a running process's
+// stdin pipe. Used by `etronium shell` for interactive TTY relay.
+//
+// Closes the pipe if req.Eof=true (Ctrl-D semantics).
+// Returns immediately with ack indicating bytes written + whether closed.
+func (a *Agent) handleWriteStdin(req *etroniumv1.WriteStdinRequest) error {
+	a.procsMu.Lock()
+	lp, ok := a.procs[req.ProcessId]
+	a.procsMu.Unlock()
+	if !ok {
+		// Process not found / not local — ack closed.
+		a.outbox <- &etroniumv1.LordCmd{
+			Cmd: &etroniumv1.LordCmd_WriteStdinAck{
+				WriteStdinAck: &etroniumv1.WriteStdinAck{
+					LordId:    a.lordID,
+					ProcessId: req.ProcessId,
+					Closed:    true,
+				},
+			},
+		}
+		return nil
+	}
+	lp.Cmd.mu.Lock()
+	stdin := lp.Cmd.stdin
+	closed := lp.Cmd.stdinClosed
+	lp.Cmd.mu.Unlock()
+	if stdin == nil || closed {
+		a.outbox <- &etroniumv1.LordCmd{
+			Cmd: &etroniumv1.LordCmd_WriteStdinAck{
+				WriteStdinAck: &etroniumv1.WriteStdinAck{
+					LordId:    a.lordID,
+					ProcessId: req.ProcessId,
+					Closed:    true,
+				},
+			},
+		}
+		return nil
+	}
+
+	written := int32(0)
+	closedNow := false
+	if len(req.Data) > 0 {
+		n, err := stdin.Write(req.Data)
+		written = int32(n)
+		if err != nil {
+			// Pipe broken — process likely exited.
+			closedNow = true
+			lp.Cmd.mu.Lock()
+			lp.Cmd.stdinClosed = true
+			lp.Cmd.mu.Unlock()
+		}
+	}
+	if req.Eof && !closedNow {
+		if err := stdin.Close(); err != nil {
+			a.logger.Debug("stdin close", "err", err)
+		}
+		closedNow = true
+		lp.Cmd.mu.Lock()
+		lp.Cmd.stdinClosed = true
+		lp.Cmd.mu.Unlock()
+	}
+	a.outbox <- &etroniumv1.LordCmd{
+		Cmd: &etroniumv1.LordCmd_WriteStdinAck{
+			WriteStdinAck: &etroniumv1.WriteStdinAck{
+				LordId:       a.lordID,
+				ProcessId:    req.ProcessId,
+				BytesWritten: written,
+				Closed:       closedNow,
+			},
+		},
 	}
 	return nil
 }

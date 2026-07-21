@@ -405,6 +405,46 @@
         ]
       }
     },
+    "/api/v1/processes/{processId}/stdin": {
+      "post": {
+        "summary": "Write stdin to running process",
+        "description": "Interactive shell relay: tenant stdin → scheduler → lord → process.",
+        "operationId": "SchedulerService_WriteStdin",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1WriteStdinResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "processId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1SchedulerServiceWriteStdinBody"
+            }
+          }
+        ],
+        "tags": [
+          "tenant"
+        ]
+      }
+    },
     "/api/v1/processes/{processId}/wait": {
       "post": {
         "summary": "Wait for process exit",
@@ -872,6 +912,10 @@
         "setDrain": {
           "$ref": "#/definitions/v1SetDrainRequest",
           "description": "Phase 5: scheduler уходит в shutdown, просит lord'ов drain\n(новых процессов не брать, существующих добить через grace)."
+        },
+        "writeStdin": {
+          "$ref": "#/definitions/v1WriteStdinRequest",
+          "description": "Phase 6: interactive shell relay. Scheduler форвардит tenant's\nterminal stdin в запущенный процесс на lord'е."
         }
       },
       "description": "LordEvent — то что scheduler шлёт lord'у в Connect stream."
@@ -1252,6 +1296,22 @@
         }
       }
     },
+    "v1SchedulerServiceWriteStdinBody": {
+      "type": "object",
+      "properties": {
+        "lordId": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string",
+          "format": "byte"
+        },
+        "eof": {
+          "type": "boolean",
+          "title": "close stdin pipe (Ctrl-D semantics)"
+        }
+      }
+    },
     "v1SetDrainRequest": {
       "type": "object",
       "properties": {
@@ -1320,6 +1380,57 @@
         "stateDumpPathHint": {
           "type": "string",
           "title": "e.g. \"/var/lib/etronium/state/\u003cpid\u003e.json\""
+        }
+      }
+    },
+    "v1WriteStdinAck": {
+      "type": "object",
+      "properties": {
+        "lordId": {
+          "type": "string"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "bytesWritten": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "closed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v1WriteStdinRequest": {
+      "type": "object",
+      "properties": {
+        "lordId": {
+          "type": "string"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string",
+          "format": "byte"
+        },
+        "eof": {
+          "type": "boolean",
+          "title": "close stdin pipe (Ctrl-D semantics)"
+        }
+      }
+    },
+    "v1WriteStdinResponse": {
+      "type": "object",
+      "properties": {
+        "bytesWritten": {
+          "type": "integer",
+          "format": "int32",
+          "title": "may be \u003c len(data) if pipe was full"
+        },
+        "closed": {
+          "type": "boolean",
+          "title": "pipe was closed (eof requested or process exited)"
         }
       }
     }

@@ -276,6 +276,22 @@ service SchedulerService {
     };
   }
 
+  // WriteStdin — interactive TTY relay. Tenant шлёт stdin chunk в запущенный
+  // процесс; scheduler форвардит в lord через bidi stream.
+  //
+  // Используется `etronium shell` для интерактивного bash на lord'е.
+  rpc WriteStdin(WriteStdinRequest) returns (WriteStdinResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/processes/{process_id}/stdin"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Write stdin to running process"
+      description: "Interactive shell relay: tenant stdin → scheduler → lord → process."
+      tags: "tenant"
+    };
+  }
+
   // GetProcess — текущее состояние процесса.
   rpc GetProcess(GetProcessRequest) returns (ProcessInfo) {
     option (google.api.http) = {
@@ -580,6 +596,18 @@ service LordService {
     };
   }
 
+  // WriteStdin — scheduler шлёт stdin chunk в запущенный процесс на lord'е.
+  //
+  // Используется `etronium shell` для interactive TTY relay:
+  // tenant terminal stdin → scheduler → WriteStdin → lord → process.StdinPipe.
+  // Eof=true закрывает stdin pipe (аналог Ctrl-D в shell).
+  rpc WriteStdin(WriteStdinRequest) returns (WriteStdinResponse) {
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Write stdin to running process (interactive shell relay)"
+      tags: "lord"
+    };
+  }
+
   // FilePull / FilePush — для тенантских файлов.
   rpc FilePull(FilePullRequest) returns (FilePullResponse) {
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
@@ -673,6 +701,25 @@ message StatsRemoteRequest {
   string lord_id = 1;
 }
 
+message WriteStdinRequest {
+  string lord_id    = 1;
+  string process_id = 2;
+  bytes  data       = 3;
+  bool   eof        = 4; // close stdin pipe (Ctrl-D semantics)
+}
+
+message WriteStdinResponse {
+  int32 bytes_written = 1; // may be < len(data) if pipe was full
+  bool  closed        = 2; // pipe was closed (eof requested or process exited)
+}
+
+message WriteStdinAck {
+  string lord_id    = 1;
+  string process_id = 2;
+  int32  bytes_written = 3;
+  bool   closed        = 4;
+}
+
 message FilePullRequest {
   string path = 1;
   uint64 offset = 2;
@@ -706,6 +753,9 @@ message LordCmd {
     ProcessIo io = 4;                   // stdout/stderr от запущенного процесса
     ProcessExit process_exit = 5;       // процесс завершился (exit_code + signal)
     AcknowledgeLazyDeathRequest lazy_death = 6;
+    // Phase 6: ack на LordEvent.write_stdin. Lord пишет stdin chunk
+    // в process.StdinPipe и подтверждает.
+    WriteStdinAck write_stdin_ack = 7;
   }
 }
 
@@ -734,6 +784,9 @@ message LordEvent {
     // Phase 5: scheduler уходит в shutdown, просит lord'ов drain
     // (новых процессов не брать, существующих добить через grace).
     SetDrainRequest set_drain = 9;
+    // Phase 6: interactive shell relay. Scheduler форвардит tenant's
+    // terminal stdin в запущенный процесс на lord'е.
+    WriteStdinRequest write_stdin = 10;
   }
 }
 

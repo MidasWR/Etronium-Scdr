@@ -20,10 +20,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	etroniumv1 "github.com/midas/Etronium-Scdr/internal/gen/etronium/v1"
 	"google.golang.org/grpc"
@@ -53,8 +55,10 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&outputJSON, "json", false, "JSON output")
 
 	rootCmd.AddCommand(runCmd())
+	rootCmd.AddCommand(shellCmd())
 	rootCmd.AddCommand(psCmd())
 	rootCmd.AddCommand(getCmd())
+	rootCmd.AddCommand(attachCmd())
 	rootCmd.AddCommand(killCmd())
 	rootCmd.AddCommand(waitCmd())
 	rootCmd.AddCommand(statusCmd())
@@ -75,6 +79,140 @@ func main() {
 }
 
 // ───────────────────────────────────────────────────────────────────────
+// shell — открывает интерактивный bash на lord через scheduler.
+// Вешает relay между tenant terminal и stdin/stdout процесса на lord'е.
+//
+// Механика:
+//   1. Spawn /bin/bash -i на lord через Spawn RPC
+//   2. Открываем StreamProcessIO follow=true → читаем stdout/stderr
+//   3. Слушаем os.Stdin в raw-mode (TTY) → forward через WriteStdin RPC
+//   4. Ctrl-D → EOF → bash exits gracefully
+//   5. Процесс exits → отвязываем TTY, exit с тем же кодом
+//
+// Для pipe-mode (no TTY) используется line-buffered stdin.
+func shellCmd() *cobra.Command {
+	var (
+		shellPath string
+		preferLord string
+	)
+	c := &cobra.Command{
+		Use:   "shell [flags]",
+		Short: "Open interactive shell on a lord (Phase 6: TTY relay)",
+		Long: "Spawns /bin/bash -i on a lord and relays your terminal's stdin/stdout " +
+			"through the scheduler via StreamProcessIO + WriteStdin RPCs.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Phase 1: in-process shell relay implementation.
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			cli, conn, err := dial(ctx)
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			// 1. Spawn bash on lord.
+			info, err := cli.Spawn(ctx, &etroniumv1.SpawnRequest{
+				TenantId:     tenantID,
+				ExecPath:     shellPath,
+				Argv:         []string{"-i"},
+				PreferLordId: preferLord,
+				MaxRestarts:  0, // shell не рестартим при ошибках
+			})
+			if err != nil {
+				return fmt.Errorf("spawn shell: %w", err)
+			}
+			processID := info.GetRef().GetProcessId()
+			fmt.Fprintf(os.Stderr, "[etronium shell] connected to lord=%s process_id=%s pid=%d\n",
+				info.GetRef().GetLordId(), processID, info.GetRef().GetLocalPid())
+
+			// 2. Set TTY to raw mode if available (for Ctrl-C, etc.).
+			var oldState *term.State
+			inTty := term.IsTerminal(int(os.Stdin.Fd()))
+			if inTty {
+				oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warn: MakeRaw: %v\n", err)
+				} else {
+					defer term.Restore(int(os.Stdin.Fd()), oldState)
+				}
+			}
+
+			// 3. Goroutine: stdin → WriteStdin RPC.
+			go func() {
+				buf := make([]byte, 4096)
+				for {
+					n, err := os.Stdin.Read(buf)
+					if n > 0 {
+						_, werr := cli.WriteStdin(ctx, &etroniumv1.WriteStdinRequest{
+							ProcessId: processID,
+							Data:      append([]byte{}, buf[:n]...),
+							Eof:       false,
+						})
+						if werr != nil {
+							fmt.Fprintf(os.Stderr, "[etronium shell] write stdin: %v\n", werr)
+							return
+						}
+					}
+					if err != nil {
+						// EOF on stdin (Ctrl-D or pipe closed).
+						_, _ = cli.WriteStdin(ctx, &etroniumv1.WriteStdinRequest{
+							ProcessId: processID,
+							Eof:       true,
+						})
+						return
+					}
+				}
+			}()
+
+			// 4. Main: read stdout/stderr via StreamProcessIO follow.
+			stream, err := cli.StreamProcessIO(ctx, &etroniumv1.StreamProcessIORequest{
+				ProcessId: processID,
+				Follow:    true,
+			})
+			if err != nil {
+				return fmt.Errorf("open stream: %w", err)
+			}
+			for {
+				chunk, err := stream.Recv()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return fmt.Errorf("stream recv: %w", err)
+				}
+				if chunk == nil {
+					break
+				}
+				if chunk.GetStream() == etroniumv1.IOChunk_STREAM_STDERR {
+					os.Stderr.Write(chunk.GetData())
+				} else {
+					os.Stdout.Write(chunk.GetData())
+				}
+			}
+
+			// 5. Process exited. Get final state.
+			finalInfo, err := cli.GetProcess(ctx, &etroniumv1.GetProcessRequest{
+				ProcessId: processID,
+			})
+			if err != nil {
+				return nil
+			}
+			if finalInfo.GetExitCode() != 0 || finalInfo.GetExitSignal() != 0 {
+				fmt.Fprintf(os.Stderr, "[etronium shell] exit_code=%d signal=%d\n",
+					finalInfo.GetExitCode(), finalInfo.GetExitSignal())
+			}
+			if finalInfo.GetExitCode() != 0 {
+				os.Exit(int(finalInfo.GetExitCode()))
+			}
+			return nil
+		},
+	}
+	c.Flags().StringVar(&shellPath, "shell", "/bin/bash", "shell binary path on the lord")
+	c.Flags().StringVar(&preferLord, "prefer-lord", "", "soft-affinity lord id")
+	return c
+}
+
 // run — spawn a new process. Positional exec + args.
 //
 //	etronium run /bin/sleep 60
@@ -174,6 +312,55 @@ func psCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&onlyRunning, "running", false, "only RUNNING/PAUSED")
+	return c
+}
+
+// attach — dump captured IO (stdout) of a process. Default follow=false
+// dumps the ring buffer and exits. With --follow, streams live until process
+// exits or stdin EOF.
+//
+// Useful for testing `tenant shell` end-to-end and as a kubectl attach analog.
+func attachCmd() *cobra.Command {
+	var follow bool
+	c := &cobra.Command{
+		Use:   "attach <process_id>",
+		Short: "Attach to running process stdio (dump captured IO or follow live)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cli, conn, err := dial(ctx)
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+			stream, err := cli.StreamProcessIO(ctx, &etroniumv1.StreamProcessIORequest{
+				ProcessId: args[0],
+				Follow:    follow,
+			})
+			if err != nil {
+				return err
+			}
+			for {
+				chunk, err := stream.Recv()
+				if err == io.EOF {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				if chunk == nil {
+					return nil
+				}
+				if chunk.GetStream() == etroniumv1.IOChunk_STREAM_STDERR {
+					os.Stderr.Write(chunk.GetData())
+				} else {
+					os.Stdout.Write(chunk.GetData())
+				}
+			}
+		},
+	}
+	c.Flags().BoolVar(&follow, "follow", false, "follow live output (default dumps ring buffer once)")
 	return c
 }
 

@@ -47,6 +47,11 @@ type Server struct {
 
 	// autoscale — populated by StartAutoscale; nil when autoscale disabled.
 	autoscale *AutoscaleState
+
+	// writeStdinWaiters[process_id] = chan for incoming WriteStdinAck.
+	// Used by WriteStdin RPC to wait synchronously for lord's ack.
+	writeStdinMu      sync.Mutex
+	writeStdinWaiters map[string]chan *etroniumv1.WriteStdinAck
 }
 
 // NewServer — конструктор.
@@ -56,9 +61,10 @@ func NewServer(cfg *Config, processes *ProcessTable, lords *LordRegistry, logger
 		processes:    processes,
 		lords:        lords,
 		bpftoolBin:   cfg.BpftoolBin,
-		lordSessions: make(map[string]*lordSession),
-		lastRecoveryAt: make(map[string]time.Time),
-		logger:       logger,
+		lordSessions:       make(map[string]*lordSession),
+		lastRecoveryAt:     make(map[string]time.Time),
+		writeStdinWaiters:  make(map[string]chan *etroniumv1.WriteStdinAck),
+		logger:             logger,
 	}
 }
 
@@ -287,6 +293,91 @@ func timerOrNever(t *time.Timer) <-chan time.Time {
 	return t.C
 }
 
+// registerWriteStdinWaiter — регистрирует канал, в который будет доставлен
+// WriteStdinAck от лорда (для синхронного WriteStdin RPC).
+func (s *Server) registerWriteStdinWaiter(processID string, ch chan *etroniumv1.WriteStdinAck) {
+	s.writeStdinMu.Lock()
+	defer s.writeStdinMu.Unlock()
+	s.writeStdinWaiters[processID] = ch
+}
+
+func (s *Server) unregisterWriteStdinWaiter(processID string) {
+	s.writeStdinMu.Lock()
+	defer s.writeStdinMu.Unlock()
+	delete(s.writeStdinWaiters, processID)
+}
+
+// deliverWriteStdinAck — вызывается из lordSession recv loop когда приходит
+// LordCmd.write_stdin_ack. Доставляет ack в waiter-канал (если есть).
+func (s *Server) deliverWriteStdinAck(ack *etroniumv1.WriteStdinAck) {
+	s.writeStdinMu.Lock()
+	ch, ok := s.writeStdinWaiters[ack.GetProcessId()]
+	s.writeStdinMu.Unlock()
+	if !ok {
+		// Возможно process exited и waiter уже отменился — игнорируем.
+		return
+	}
+	select {
+	case ch <- ack:
+	default:
+		// Канал переполнен или waiter уже отвалился. Не блокируем.
+	}
+}
+
+// WriteStdin — Phase 6: forward stdin chunk to running process on lord.
+//
+// Used by `etronium shell` for interactive TTY relay. The flow:
+//   tenant stdin → SchedulerService.WriteStdin → Server.WriteStdin
+//   → lordSession.outbox → LordEvent.write_stdin → lord handleWriteStdin
+//   → process.StdinPipe.Write → bytes acked back via LordCmd.write_stdin_ack
+//
+// Synchronous wrt the ack: waits for lord to confirm before returning.
+// Timeout 5s. Closed=true if process exited or lord already cleaned up.
+func (s *Server) WriteStdin(ctx context.Context, req *etroniumv1.WriteStdinRequest) (*etroniumv1.WriteStdinResponse, error) {
+	entry, ok := s.processes.Get(req.ProcessId)
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "process %s not found", req.ProcessId)
+	}
+	lordID := entry.Info.GetRef().GetLordId()
+	if lordID == "" {
+		return nil, status.Errorf(codes.FailedPrecondition, "process %s has no lord assigned", req.ProcessId)
+	}
+	respCh := make(chan *etroniumv1.WriteStdinAck, 1)
+	s.registerWriteStdinWaiter(req.ProcessId, respCh)
+	defer s.unregisterWriteStdinWaiter(req.ProcessId)
+
+	sess, err := s.getSession(lordID)
+	if err != nil {
+		return &etroniumv1.WriteStdinResponse{Closed: true}, nil
+	}
+	select {
+	case sess.outbox <- &etroniumv1.LordEvent{
+		Event: &etroniumv1.LordEvent_WriteStdin{
+			WriteStdin: &etroniumv1.WriteStdinRequest{
+				LordId:    lordID,
+				ProcessId: req.ProcessId,
+				Data:      req.Data,
+				Eof:       req.Eof,
+			},
+		},
+	}:
+	case <-time.After(5 * time.Second):
+		return &etroniumv1.WriteStdinResponse{Closed: true}, nil
+	}
+
+	select {
+	case ack := <-respCh:
+		return &etroniumv1.WriteStdinResponse{
+			BytesWritten: ack.GetBytesWritten(),
+			Closed:       ack.GetClosed(),
+		}, nil
+	case <-time.After(5 * time.Second):
+		return &etroniumv1.WriteStdinResponse{Closed: true}, nil
+	case <-ctx.Done():
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+}
+
 // GetProcess — снимок состояния.
 func (s *Server) GetProcess(ctx context.Context, req *etroniumv1.GetProcessRequest) (*etroniumv1.ProcessInfo, error) {
 	entry, ok := s.processes.Get(req.ProcessId)
@@ -324,15 +415,17 @@ func (s *Server) ListLords(ctx context.Context, req *etroniumv1.ListLordsRequest
 	return &etroniumv1.ListLordsResponse{Lords: lords}, nil
 }
 
-// StreamProcessIO — Phase 2: real live IO streaming.
+// StreamProcessIO — Phase 6: real live IO streaming via polling.
 //
 // Режимы:
-//   - Follow=true:  сначала dump ring buffer (catch-up), затем live subscription
-//                   до process exit (или client cancel).
-//   - Follow=false: только dump ring buffer и close (CLI: `etronium process attach
-//                   --no-follow` или простой GetProcess).
+//   - Follow=true:  сначала отдаём текущее содержимое ring buffer, затем
+//                   poll каждые 100ms и шлём новые байты. Завершаем когда
+//                   процесс exits или client cancel.
+//   - Follow=false: только dump ring buffer и close.
 //
-// Tenant-изоляция: проверяем что process owner == req tenant (или admin).
+// Использует ringBuffer.SinceOffset(total) — атомарно отдаёт bytes
+// появившиеся после переданного total-offset. На стороне процесса
+// ProcessEntry.ioLastSent хранит прогресс per-stream.
 func (s *Server) StreamProcessIO(req *etroniumv1.StreamProcessIORequest, stream etroniumv1.SchedulerService_StreamProcessIOServer) error {
 	entry, ok := s.processes.Get(req.ProcessId)
 	if !ok {
@@ -342,54 +435,61 @@ func (s *Server) StreamProcessIO(req *etroniumv1.StreamProcessIORequest, stream 
 	// изменения RPC middleware для extract tenant_id из x-tenant-id header).
 	// Сейчас любой tenant с правильным process_id может читать IO — это Phase 2
 	// TODO для hardening; для MVP demo все процессы — одного tenant'а.
-	_ = entry
 
-	// Phase 2 follow-mode: сначала отдаём накопленное в ring buffer,
-	// потом subscribe на live updates пока процесс жив.
-	if req.Follow {
-		// Phase 2: live IO streaming через SubscribeIO (отложен).
-		// Currently we only dump the ring buffer once; Phase 2 will
-		// stream live updates too.
-		// _ = liveCh; _ = cancelSub
-
-		// Drain ring buffer content.
+	if !req.Follow {
+		// Non-follow mode: dump buffer and close.
 		data := entry.ioBuf.Bytes()
 		if len(data) > 0 {
-			if err := stream.Send(&etroniumv1.IOChunk{
+			return stream.Send(&etroniumv1.IOChunk{
 				Stream: etroniumv1.IOChunk_STREAM_STDOUT,
 				Data:   data,
-			}); err != nil {
-				return err
-			}
+			})
 		}
-
-		// 3. Live loop: Phase 2 (отложен). В Phase 1 follow=true ведёт себя
-		//    как non-follow (dumps ring buffer once + returns).
-		//
-		// Future Phase 2:
-		//   for {
-		//       select {
-		//       case <-stream.Context().Done():
-		//           return stream.Context().Err()
-		//       case <-entry.ExitedChan():
-		//           return nil
-		//       case chunk := <-liveCh:
-		//           if chunk == nil { return nil }
-		//           if err := stream.Send(chunk); err != nil { return err }
-		//       }
-		//   }
 		return nil
 	}
 
-	// Non-follow mode: dump ring buffer and close (legacy behaviour).
-	data := entry.ioBuf.Bytes()
-	if len(data) > 0 {
-		return stream.Send(&etroniumv1.IOChunk{
-			Stream: etroniumv1.IOChunk_STREAM_STDOUT,
-			Data:   data,
-		})
+	// Phase 6 follow-mode: start with last-known offset (per-process) so
+	// reattaching to a running process doesn't redump everything.
+	entry.ioLastSentMu.Lock()
+	lastTotal := entry.ioLastSent
+	entry.ioLastSentMu.Unlock()
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		case <-entry.ExitedChan():
+			// Final flush: drain anything still in buffer.
+			data, newTotal := entry.ioBuf.SinceOffset(lastTotal)
+			if len(data) > 0 {
+				_ = stream.Send(&etroniumv1.IOChunk{
+					Stream: etroniumv1.IOChunk_STREAM_STDOUT,
+					Data:   data,
+				})
+				entry.ioLastSentMu.Lock()
+				entry.ioLastSent = newTotal
+				entry.ioLastSentMu.Unlock()
+			}
+			return nil
+		case <-ticker.C:
+			data, newTotal := entry.ioBuf.SinceOffset(lastTotal)
+			if len(data) > 0 {
+				if err := stream.Send(&etroniumv1.IOChunk{
+					Stream: etroniumv1.IOChunk_STREAM_STDOUT,
+					Data:   data,
+				}); err != nil {
+					return err
+				}
+				lastTotal = newTotal
+				entry.ioLastSentMu.Lock()
+				entry.ioLastSent = newTotal
+				entry.ioLastSentMu.Unlock()
+			}
+		}
 	}
-	return nil
 }
 
 // WatchProcess — Phase 0: упрощение, события не буферизуются.

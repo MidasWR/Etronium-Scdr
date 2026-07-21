@@ -47,6 +47,7 @@ const (
 	SchedulerService_Spawn_FullMethodName               = "/etronium.v1.SchedulerService/Spawn"
 	SchedulerService_Kill_FullMethodName                = "/etronium.v1.SchedulerService/Kill"
 	SchedulerService_Wait_FullMethodName                = "/etronium.v1.SchedulerService/Wait"
+	SchedulerService_WriteStdin_FullMethodName          = "/etronium.v1.SchedulerService/WriteStdin"
 	SchedulerService_GetProcess_FullMethodName          = "/etronium.v1.SchedulerService/GetProcess"
 	SchedulerService_ListProcesses_FullMethodName       = "/etronium.v1.SchedulerService/ListProcesses"
 	SchedulerService_Migrate_FullMethodName             = "/etronium.v1.SchedulerService/Migrate"
@@ -78,6 +79,11 @@ type SchedulerServiceClient interface {
 	// Возвращает ProcessInfo с финальным state (EXITED или STOPPED).
 	// Если timeout — возвращает текущий state.
 	Wait(ctx context.Context, in *WaitRequest, opts ...grpc.CallOption) (*ProcessInfo, error)
+	// WriteStdin — interactive TTY relay. Tenant шлёт stdin chunk в запущенный
+	// процесс; scheduler форвардит в lord через bidi stream.
+	//
+	// Используется `etronium shell` для интерактивного bash на lord'е.
+	WriteStdin(ctx context.Context, in *WriteStdinRequest, opts ...grpc.CallOption) (*WriteStdinResponse, error)
 	// GetProcess — текущее состояние процесса.
 	GetProcess(ctx context.Context, in *GetProcessRequest, opts ...grpc.CallOption) (*ProcessInfo, error)
 	// ListProcesses — список процессов тенанта (на ВСЕХ lord'ах где они живут).
@@ -141,6 +147,16 @@ func (c *schedulerServiceClient) Wait(ctx context.Context, in *WaitRequest, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ProcessInfo)
 	err := c.cc.Invoke(ctx, SchedulerService_Wait_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *schedulerServiceClient) WriteStdin(ctx context.Context, in *WriteStdinRequest, opts ...grpc.CallOption) (*WriteStdinResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WriteStdinResponse)
+	err := c.cc.Invoke(ctx, SchedulerService_WriteStdin_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -275,6 +291,11 @@ type SchedulerServiceServer interface {
 	// Возвращает ProcessInfo с финальным state (EXITED или STOPPED).
 	// Если timeout — возвращает текущий state.
 	Wait(context.Context, *WaitRequest) (*ProcessInfo, error)
+	// WriteStdin — interactive TTY relay. Tenant шлёт stdin chunk в запущенный
+	// процесс; scheduler форвардит в lord через bidi stream.
+	//
+	// Используется `etronium shell` для интерактивного bash на lord'е.
+	WriteStdin(context.Context, *WriteStdinRequest) (*WriteStdinResponse, error)
 	// GetProcess — текущее состояние процесса.
 	GetProcess(context.Context, *GetProcessRequest) (*ProcessInfo, error)
 	// ListProcesses — список процессов тенанта (на ВСЕХ lord'ах где они живут).
@@ -322,6 +343,9 @@ func (UnimplementedSchedulerServiceServer) Kill(context.Context, *KillRequest) (
 }
 func (UnimplementedSchedulerServiceServer) Wait(context.Context, *WaitRequest) (*ProcessInfo, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Wait not implemented")
+}
+func (UnimplementedSchedulerServiceServer) WriteStdin(context.Context, *WriteStdinRequest) (*WriteStdinResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method WriteStdin not implemented")
 }
 func (UnimplementedSchedulerServiceServer) GetProcess(context.Context, *GetProcessRequest) (*ProcessInfo, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetProcess not implemented")
@@ -421,6 +445,24 @@ func _SchedulerService_Wait_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SchedulerServiceServer).Wait(ctx, req.(*WaitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SchedulerService_WriteStdin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WriteStdinRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SchedulerServiceServer).WriteStdin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SchedulerService_WriteStdin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SchedulerServiceServer).WriteStdin(ctx, req.(*WriteStdinRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -593,6 +635,10 @@ var SchedulerService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SchedulerService_Wait_Handler,
 		},
 		{
+			MethodName: "WriteStdin",
+			Handler:    _SchedulerService_WriteStdin_Handler,
+		},
+		{
 			MethodName: "GetProcess",
 			Handler:    _SchedulerService_GetProcess_Handler,
 		},
@@ -643,6 +689,7 @@ const (
 	LordService_ExecRemote_FullMethodName           = "/etronium.v1.LordService/ExecRemote"
 	LordService_KillRemote_FullMethodName           = "/etronium.v1.LordService/KillRemote"
 	LordService_StatsRemote_FullMethodName          = "/etronium.v1.LordService/StatsRemote"
+	LordService_WriteStdin_FullMethodName           = "/etronium.v1.LordService/WriteStdin"
 	LordService_FilePull_FullMethodName             = "/etronium.v1.LordService/FilePull"
 	LordService_FilePush_FullMethodName             = "/etronium.v1.LordService/FilePush"
 	LordService_AcknowledgeLazyDeath_FullMethodName = "/etronium.v1.LordService/AcknowledgeLazyDeath"
@@ -672,6 +719,12 @@ type LordServiceClient interface {
 	KillRemote(ctx context.Context, in *KillRemoteRequest, opts ...grpc.CallOption) (*KillRemoteResponse, error)
 	// StatsRemote — текущие метрики lord'а (для placement).
 	StatsRemote(ctx context.Context, in *StatsRemoteRequest, opts ...grpc.CallOption) (*Lord, error)
+	// WriteStdin — scheduler шлёт stdin chunk в запущенный процесс на lord'е.
+	//
+	// Используется `etronium shell` для interactive TTY relay:
+	// tenant terminal stdin → scheduler → WriteStdin → lord → process.StdinPipe.
+	// Eof=true закрывает stdin pipe (аналог Ctrl-D в shell).
+	WriteStdin(ctx context.Context, in *WriteStdinRequest, opts ...grpc.CallOption) (*WriteStdinResponse, error)
 	// FilePull / FilePush — для тенантских файлов.
 	FilePull(ctx context.Context, in *FilePullRequest, opts ...grpc.CallOption) (*FilePullResponse, error)
 	FilePush(ctx context.Context, in *FilePushRequest, opts ...grpc.CallOption) (*FilePushResponse, error)
@@ -759,6 +812,16 @@ func (c *lordServiceClient) StatsRemote(ctx context.Context, in *StatsRemoteRequ
 	return out, nil
 }
 
+func (c *lordServiceClient) WriteStdin(ctx context.Context, in *WriteStdinRequest, opts ...grpc.CallOption) (*WriteStdinResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WriteStdinResponse)
+	err := c.cc.Invoke(ctx, LordService_WriteStdin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *lordServiceClient) FilePull(ctx context.Context, in *FilePullRequest, opts ...grpc.CallOption) (*FilePullResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FilePullResponse)
@@ -813,6 +876,12 @@ type LordServiceServer interface {
 	KillRemote(context.Context, *KillRemoteRequest) (*KillRemoteResponse, error)
 	// StatsRemote — текущие метрики lord'а (для placement).
 	StatsRemote(context.Context, *StatsRemoteRequest) (*Lord, error)
+	// WriteStdin — scheduler шлёт stdin chunk в запущенный процесс на lord'е.
+	//
+	// Используется `etronium shell` для interactive TTY relay:
+	// tenant terminal stdin → scheduler → WriteStdin → lord → process.StdinPipe.
+	// Eof=true закрывает stdin pipe (аналог Ctrl-D в shell).
+	WriteStdin(context.Context, *WriteStdinRequest) (*WriteStdinResponse, error)
 	// FilePull / FilePush — для тенантских файлов.
 	FilePull(context.Context, *FilePullRequest) (*FilePullResponse, error)
 	FilePush(context.Context, *FilePushRequest) (*FilePushResponse, error)
@@ -845,6 +914,9 @@ func (UnimplementedLordServiceServer) KillRemote(context.Context, *KillRemoteReq
 }
 func (UnimplementedLordServiceServer) StatsRemote(context.Context, *StatsRemoteRequest) (*Lord, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StatsRemote not implemented")
+}
+func (UnimplementedLordServiceServer) WriteStdin(context.Context, *WriteStdinRequest) (*WriteStdinResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method WriteStdin not implemented")
 }
 func (UnimplementedLordServiceServer) FilePull(context.Context, *FilePullRequest) (*FilePullResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FilePull not implemented")
@@ -966,6 +1038,24 @@ func _LordService_StatsRemote_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LordService_WriteStdin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WriteStdinRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LordServiceServer).WriteStdin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LordService_WriteStdin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LordServiceServer).WriteStdin(ctx, req.(*WriteStdinRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _LordService_FilePull_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(FilePullRequest)
 	if err := dec(in); err != nil {
@@ -1042,6 +1132,10 @@ var LordService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StatsRemote",
 			Handler:    _LordService_StatsRemote_Handler,
+		},
+		{
+			MethodName: "WriteStdin",
+			Handler:    _LordService_WriteStdin_Handler,
 		},
 		{
 			MethodName: "FilePull",

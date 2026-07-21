@@ -32,6 +32,11 @@ type ProcessEntry struct {
 	// Phase 0: не используется, упрощение.
 	ioBuf *ringBuffer
 
+	// Последний offset отданный подписчику через StreamProcessIO follow.
+	// Используется для отслеживания "что уже отправили" в polling loop.
+	ioLastSent   int64
+	ioLastSentMu sync.Mutex
+
 	// Подписчики WatchProcess.
 	watchersMu sync.Mutex
 	watchers   []watcher
@@ -347,4 +352,49 @@ func (r *ringBuffer) Bytes() []byte {
 	copy(out, r.data[r.off:])
 	copy(out[r.cap-r.off:], r.data[:r.off])
 	return out
+}
+
+// Total returns the total number of bytes ever written (modulo cap wrap).
+// Used by StreamProcessIO follow to track how much was consumed.
+func (r *ringBuffer) Total() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.full {
+		return int64(r.cap) * 2 // heuristic; not exact after wrap
+	}
+	return int64(r.off)
+}
+
+// SinceOffset returns bytes written after the given offset (atomic).
+// When the buffer wraps (r.full), returns the last `cap` bytes.
+// lastTotal is the previous Total() value; the new bytes are
+// those whose offset is in (lastTotal, currentTotal] modulo cap.
+func (r *ringBuffer) SinceOffset(lastTotal int64) (data []byte, newTotal int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cur := int64(r.off)
+	if r.full {
+		cur = int64(r.cap) * 2
+	}
+	if cur <= lastTotal {
+		return nil, lastTotal
+	}
+	// Number of new bytes (capped at r.cap since we lose old data on wrap).
+	added := cur - lastTotal
+	if added > int64(r.cap) {
+		added = int64(r.cap)
+	}
+	// Compute the absolute offsets (mod cap) of the new bytes.
+	// The bytes [cur-cap .. cur) modulo cap are what we have.
+	// We want the tail `added` bytes.
+	start := (cur - added) % int64(r.cap)
+	end := cur % int64(r.cap)
+	out := make([]byte, 0, added)
+	if start < end {
+		out = append(out, r.data[start:end]...)
+	} else {
+		out = append(out, r.data[start:]...)
+		out = append(out, r.data[:end]...)
+	}
+	return out, cur
 }
