@@ -1,0 +1,19 @@
+# Runtime image for Etronium MVP.
+# Used by frontend, lord, and tenant containers.
+FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash coreutils ca-certificates iproute2 iptables wget \
+      libcap2 \
+      && rm -rf /var/lib/apt/lists/*
+
+# Binaries built on the host.
+COPY bin/scheduler            /usr/local/bin/scheduler
+COPY bin/lord                 /usr/local/bin/lord
+COPY bin/etronium             /usr/local/bin/etronium
+COPY bin/example-stateful     /usr/local/bin/example-stateful
+
+# Tenant alias — в новом дизайне клиент — `tenant`, а не `etronium`.
+RUN ln -sf /usr/local/bin/etronium /usr/local/bin/tenant
+
+WORKDIR /root
+CMD ["bash"]

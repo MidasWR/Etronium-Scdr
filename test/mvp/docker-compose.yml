@@ -1,0 +1,110 @@
+# docker-compose.mvp.yml — Etronium MVP testbed для demo.
+#
+# Topology:
+#   1× frontend    (stateful front-end на "нашей VPS")
+#   3× lord        (представляют ресурсы школьников/лоrд-providers)
+#   1× tenant      (B2B клиент, подключается к frontend)
+#
+# Это "новый дизайн" поверх существующих binaries:
+#   - "frontend" binary naming = существующий `scheduler` binary
+#   - "lord"         = существующий `lord` binary
+#   - "tenant" CLI   = существующий `etronium` binary
+#
+# Разница с chaos testbed:
+#   - Без chaos-runner (без нестабильности для demo)
+#   - С persistence (restart: unless-stopped)
+#   - Tenant в одной сети для удобного CLI
+#
+# Usage:
+#   docker compose -f test/mvp/docker-compose.yml up -d
+#   docker compose -f test/mvp/docker-compose.yml down
+#
+# Tenant commands (из host):
+#   ./bin/etronium process spawn --exec=/bin/sleep --arg=300
+#   ./bin/etronium process list
+#   ./bin/etronium lords
+
+services:
+  frontend:
+    image: etronium-mvp:runtime
+    container_name: mvp-frontend
+    network_mode: host
+    privileged: true
+    command:
+      - scheduler
+      - --addr=:51061
+      - --log=info
+    environment:
+      - SCHEDULER_HEARTBEAT_TTL=30s
+      - SCHEDULER_PLACEMENT=weighted
+      - SCHEDULER_WAL_PATH=/tmp/etronium/frontend.wal
+      - SCHEDULER_RECOVERY_DEBOUNCE=10s
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    restart: unless-stopped
+
+  lord-01:
+    image: etronium-mvp:runtime
+    container_name: mvp-lord-01
+    network_mode: host
+    privileged: true
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:51061
+      - --hostname=lord-school-A
+      - --advertise-cpu=3200
+      - --advertise-mem=4294967296
+      - --log=info
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+  lord-02:
+    image: etronium-mvp:runtime
+    container_name: mvp-lord-02
+    network_mode: host
+    privileged: true
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:51061
+      - --hostname=lord-school-B
+      - --advertise-cpu=1600
+      - --advertise-mem=2147483648
+      - --log=info
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+  lord-03:
+    image: etronium-mvp:runtime
+    container_name: mvp-lord-03
+    network_mode: host
+    privileged: true
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:51061
+      - --hostname=lord-school-C
+      - --advertise-cpu=2400
+      - --advertise-mem=3221225472
+      - --log=info
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+  tenant:
+    image: etronium-mvp:runtime
+    container_name: mvp-tenant
+    network_mode: host
+    command: ["sleep", "infinity"]
+    volumes:
+      - /tmp/etronium:/tmp/etronium
+    restart: unless-stopped
