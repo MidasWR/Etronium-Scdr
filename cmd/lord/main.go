@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,6 +19,9 @@ import (
 	"github.com/midas/Etronium-Scdr/internal/lord"
 )
 
+// version is overridden at link time via -ldflags="-X main.version=...".
+var version = "dev"
+
 func main() {
 	var (
 		schedulerAddr = flag.String("scheduler", envOr("SCHEDULER_ADDR", "localhost:50061"), "scheduler gRPC address")
@@ -27,6 +31,11 @@ func main() {
 		advCPU        = flag.Int("advertise-cpu", 0, "NUMA-overcommit: advertise CPU shares to scheduler (0=physical)")
 		advMem        = flag.Int64("advertise-mem", 0, "NUMA-overcommit: advertise mem bytes to scheduler (0=physical)")
 	)
+	flag.BoolFunc("version", "print version and exit", func(string) error {
+		fmt.Fprintf(os.Stderr, "lord %s\n", version)
+		os.Exit(0)
+		return nil
+	})
 	flag.Parse()
 
 	logger := newLogger(*logLevel, *logFormat)

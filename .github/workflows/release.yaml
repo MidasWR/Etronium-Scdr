@@ -47,10 +47,10 @@ jobs:
 
             One-command install via `installer.sh`:
             ```bash
-            curl -fsSL https://github.com/midas/Etronium-Scdr/releases/download/${{ github.ref_name }}/installer.sh | sudo bash -s -- lord --scheduler=etronium.example.com:51061
+            curl -fsSL https://github.com/MidasWR/Etronium-Scdr/releases/download/${{ github.ref_name }}/installer.sh | sudo bash -s -- lord --scheduler=etronium.example.com:51061
             ```
 
-            See [OPS-GUIDE.md](https://github.com/midas/Etronium-Scdr/blob/main/docs/OPS-GUIDE.md) for full reference.
+            See [OPS-GUIDE.md](https://github.com/MidasWR/Etronium-Scdr/blob/main/docs/OPS-GUIDE.md) for full reference.
           files: |
             dist/etronium-*.tar.gz
             dist/checksums.txt

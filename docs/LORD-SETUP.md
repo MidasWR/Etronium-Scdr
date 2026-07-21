@@ -12,7 +12,7 @@ sequence. For the high-level architecture or operator view, see
 ```bash
 # On the new host, as root (or equivalent):
 apt install golang-go libbpf-dev linux-tools-$(uname -r)          # or yum/apk
-git clone https://github.com/midas/Etronium-Scdr.git
+git clone https://github.com/MidasWR/Etronium-Scdr.git
 cd Etronium-Scdr && make build
 install bin/lord /usr/local/bin/lord
 lord \
@@ -65,7 +65,7 @@ echo "GRPC:          $(grep -E '^\s+- addr=' cmd/scheduler/main.go | head -1)"
 ### 2.1. From source
 
 ```bash
-git clone https://github.com/midas/Etronium-Scdr.git
+git clone https://github.com/MidasWR/Etronium-Scdr.git
 cd Etronium-Scdr
 go build -o bin/lord ./cmd/lord
 sudo install -m 0755 bin/lord /usr/local/bin/lord

@@ -31,6 +31,9 @@ var (
 	outputJSON    bool
 )
 
+// version is overridden at link time via -ldflags="-X main.version=...".
+var version = "dev"
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "etronium",
@@ -49,6 +52,13 @@ func main() {
 	rootCmd.AddCommand(tokenCmd())
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(formatFleetCmd())
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print etronium CLI version",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Fprintf(os.Stderr, "etronium %s\n", version)
+		},
+	})
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

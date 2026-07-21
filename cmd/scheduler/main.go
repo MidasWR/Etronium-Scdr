@@ -33,8 +33,19 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+// version is overridden at link time via -ldflags="-X main.version=...".
+var version = "dev"
+
 func main() {
 	// Phase 3.5 subcommands: "scheduler serve" (default), "scheduler migrate", "scheduler stats".
+	if len(os.Args) >= 2 && os.Args[1] == "--version" {
+		fmt.Fprintf(os.Stderr, "scheduler %s\n", version)
+		os.Exit(0)
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "version" {
+		fmt.Fprintf(os.Stderr, "scheduler %s\n", version)
+		os.Exit(0)
+	}
 	switch {
 	case len(os.Args) >= 2 && os.Args[1] == "migrate":
 		migrateCmd(os.Args[2:])

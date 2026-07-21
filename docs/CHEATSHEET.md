@@ -6,18 +6,18 @@
 
 ```bash
 # Operator installs the control-plane on machine 1.
-curl -fsSL https://github.com/midas/Etronium-Scdr/releases/latest/download/installer.sh | \
+curl -fsSL https://github.com/MidasWR/Etronium-Scdr/releases/latest/download/installer.sh | \
   sudo bash -s -- scheduler
 
 # A new machine wants to be a lord.
-curl -fsSL https://github.com/midas/Etronium-Scdr/releases/latest/download/installer.sh | \
+curl -fsSL https://github.com/MidasWR/Etronium-Scdr/releases/latest/download/installer.sh | \
   sudo bash -s -- lord \
     --scheduler=etronium.example.com:51061 \
     --hostname=my-laptop \
     --advertise-cpu=4
 
 # A user installs the tenant CLI on their laptop.
-curl -fsSL https://github.com/midas/Etronium-Scdr/releases/latest/download/installer.sh | \
+curl -fsSL https://github.com/MidasWR/Etronium-Scdr/releases/latest/download/installer.sh | \
   bash -s -- tenant \
     --scheduler=etronium.example.com:51061
 ```

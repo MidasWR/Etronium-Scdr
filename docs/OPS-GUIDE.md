@@ -15,7 +15,7 @@ a new lord into the fleet, tenant using their VPS via `tenant` CLI.
 ### Local demo (single machine, dev only)
 
 ```bash
-git clone https://github.com/midas/Etronium-Scdr.git
+git clone https://github.com/MidasWR/Etronium-Scdr.git
 cd Etronium-Scdr
 ./scripts/mvp/build-image.sh                  # ~30s
 ./scripts/mvp/up.sh -d                         # bring up stack
@@ -30,18 +30,18 @@ cat /sys/kernel/sched_ext/state                # → enabled
 
 ```bash
 # On the control-plane host (machine 1):
-curl -fsSL https://github.com/midas/Etronium-Scdr/releases/latest/download/installer.sh | \
+curl -fsSL https://github.com/MidasWR/Etronium-Scdr/releases/latest/download/installer.sh | \
   sudo bash -s -- scheduler
 
 # On every lord host (machines 2..N):
-curl -fsSL https://github.com/midas/Etronium-Scdr/releases/latest/download/installer.sh | \
+curl -fsSL https://github.com/MidasWR/Etronium-Scdr/releases/latest/download/installer.sh | \
   sudo bash -s -- lord \
     --scheduler=etronium.example.com:51061 \
     --hostname=my-laptop \
     --advertise-cpu=4
 
 # On tenant laptops:
-curl -fsSL https://github.com/midas/Etronium-Scdr/releases/latest/download/installer.sh | \
+curl -fsSL https://github.com/MidasWR/Etronium-Scdr/releases/latest/download/installer.sh | \
   bash -s -- tenant \
     --scheduler=etronium.example.com:51061
 ```
@@ -124,8 +124,8 @@ sudo apt install -y build-essential golang-go \
 ### 2.3. Build
 
 ```bash
-git clone https://github.com/midas/Etronium-Scdr-BPF.git    # BPF side
-git clone https://github.com/midas/Etronium-Scdr.git         # userspace side
+git clone https://github.com/MidasWR/Etronium-Scdr-BPF.git    # BPF side
+git clone https://github.com/MidasWR/Etronium-Scdr.git         # userspace side
 
 # Step 1: BPF side
 cd Etronium-Scdr-BPF
@@ -201,7 +201,7 @@ Bare-metal lords are first-class — but they need the BPF/host coupling:
 ```bash
 # On the new host:
 sudo apt install -y golang-go clang libbpf-dev linux-tools-$(uname -r)
-git clone https://github.com/midas/Etronium-Scdr.git
+git clone https://github.com/MidasWR/Etronium-Scdr.git
 cd Etronium-Scdr && make build
 sudo cp bin/lord /usr/local/bin/lord
 ```

@@ -9,7 +9,7 @@
 #   ./installer.sh status       --scheduler=<host>:51061     # show fleet
 #
 # Usage:
-#   curl -fsSL https://github.com/midas/Etronium-Scdr/releases/latest/download/installer.sh \
+#   curl -fsSL https://github.com/MidasWR/Etronium-Scdr/releases/latest/download/installer.sh \
 #     | bash -s -- lord --scheduler=etronium.example.com:51061 --hostname=my-laptop
 #
 # This is the only thing a user needs to memorize.
@@ -21,7 +21,7 @@ INSTALL_DIR="${ETRONIUM_INSTALL_DIR:-/usr/local/bin}"
 STATE_DIR="${ETRONIUM_STATE_DIR:-/var/lib/etronium}"
 LOG_DIR="${ETRONIUM_LOG_DIR:-/var/log/etronium}"
 SERVICE_USER="${ETRONIUM_USER:-etronium}"
-GITHUB_BASE="${ETRONIUM_REPO_BASE:-https://github.com/midas/Etronium-Scdr/releases}"
+GITHUB_BASE="${ETRONIUM_REPO_BASE:-https://github.com/MidasWR/Etronium-Scdr/releases}"
 ARCH="$(uname -m)"
 case "$ARCH" in
     x86_64)  ARCH=amd64 ;;
