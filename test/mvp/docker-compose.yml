@@ -43,10 +43,13 @@ services:
       # Phase B — cgroup isolation per-tenant
       - SCHEDULER_CGROUP_ROOT=/sys/fs/cgroup/etronium
       - SCHEDULER_ENABLE_CGROUP=true
+      # Phase 3.3 — bpftool for BPF map updates on lord register
     volumes:
       - etronium-data:/tmp/etronium
       # Phase B — mount cgroup v2 hierarchy для cgroup weight per-tenant
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      # Phase 3.3 — mount bpffs so scheduler (cilium/ebpf) can write lord BPF maps
+      - /sys/fs/bpf:/sys/fs/bpf
     restart: unless-stopped
 
   # Phase A — 5 lords с разными ресурсами (heterogeneous compute).
@@ -172,10 +175,8 @@ services:
     command:
       - schedulerd
       - --bpf-obj=/opt/etronium/bpf/sched_ext_final.o
-      - --maps-obj=/opt/etronium/bpf/etr_maps.o
       - --bpftool=/usr/local/bin/etronium-bpftool
       - --link-dir=/sys/fs/bpf/etronium/sched
-      - --maps-pin-dir=/sys/fs/bpf/etronium/maps
     restart: unless-stopped
 
   tenant-acme-corp:

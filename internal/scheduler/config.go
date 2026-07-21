@@ -17,6 +17,7 @@ type Config struct {
 	HeartbeatTTL   time.Duration // mark unhealthy после, default 30s
 	PlacementAlgo  string        // "trivial" (Phase 0) или "weighted" (Phase 2+)
 	LogLevel       string        // "debug"|"info"|"warn"|"error"
+	BpftoolBin     string        // path to bpftool binary (Phase 3.3), default "bpftool"
 }
 
 // LoadConfig — грузит из env с дефолтами.
@@ -27,6 +28,7 @@ func LoadConfig() (*Config, error) {
 		PlacementAlgo: getEnv("SCHEDULER_PLACEMENT", "trivial"),
 		LogLevel:      getEnv("SCHEDULER_LOG_LEVEL", "info"),
 		HeartbeatTTL:  30 * time.Second,
+		BpftoolBin:    getEnv("BPFTOOL_BIN", "bpftool"),
 	}
 	if v := os.Getenv("SCHEDULER_HEARTBEAT_TTL"); v != "" {
 		d, err := time.ParseDuration(v)

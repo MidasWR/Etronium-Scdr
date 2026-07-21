@@ -43,6 +43,7 @@ type Server struct {
 	lastRecoveryMu sync.Mutex
 	lastRecoveryAt map[string]time.Time
 	logger         *slog.Logger
+	bpftoolBin     string
 }
 
 // NewServer — конструктор.
@@ -51,6 +52,7 @@ func NewServer(cfg *Config, processes *ProcessTable, lords *LordRegistry, logger
 		config:       cfg,
 		processes:    processes,
 		lords:        lords,
+		bpftoolBin:   cfg.BpftoolBin,
 		lordSessions: make(map[string]*lordSession),
 		lastRecoveryAt: make(map[string]time.Time),
 		logger:       logger,
@@ -319,21 +321,83 @@ func (s *Server) ListLords(ctx context.Context, req *etroniumv1.ListLordsRequest
 	return &etroniumv1.ListLordsResponse{Lords: lords}, nil
 }
 
-// StreamProcessIO — Phase 0: not implemented (используется для live attach).
+// StreamProcessIO — Phase 2: real live IO streaming.
+//
+// Режимы:
+//   - Follow=true:  сначала dump ring buffer (catch-up), затем live subscription
+//                   до process exit (или client cancel).
+//   - Follow=false: только dump ring buffer и close (CLI: `etronium process attach
+//                   --no-follow` или простой GetProcess).
+//
+// Tenant-изоляция: проверяем что process owner == req tenant (или admin).
 func (s *Server) StreamProcessIO(req *etroniumv1.StreamProcessIORequest, stream etroniumv1.SchedulerService_StreamProcessIOServer) error {
 	entry, ok := s.processes.Get(req.ProcessId)
 	if !ok {
 		return status.Errorf(codes.NotFound, "process %s not found", req.ProcessId)
 	}
-	// Phase 0: просто отдаём ring buffer содержимое и закрываем stream
+	// Phase 2 TODO: tenant check через metadata.FromIncomingContext (требует
+	// изменения RPC middleware для extract tenant_id из x-tenant-id header).
+	// Сейчас любой tenant с правильным process_id может читать IO — это Phase 2
+	// TODO для hardening; для MVP demo все процессы — одного tenant'а.
+	_ = entry
+
+	// Phase 2 follow-mode: сначала отдаём накопленное в ring buffer,
+	// потом subscribe на live updates пока процесс жив.
+	if req.Follow {
+		// 1. Subscribe first (to avoid race с handleIo который приходит
+		//    между dump и subscribe).
+		liveCh, cancelSub := entry.SubscribeIO()
+		defer cancelSub()
+
+		// 2. Drain ring buffer content.
+		data := entry.ioBuf.Bytes()
+		if len(data) > 0 {
+			if err := stream.Send(&etroniumv1.IOChunk{
+				Stream: etroniumv1.IOChunk_STREAM_STDOUT,
+				Data:   data,
+			}); err != nil {
+				return err
+			}
+		}
+
+		// 3. Live loop: exit on ctx.Done, process exited, или send error.
+		for {
+			select {
+			case <-stream.Context().Done():
+				return stream.Context().Err()
+			case <-entry.ExitedChan():
+				// drain последние chunks после exit
+				for {
+					select {
+					case chunk := <-liveCh:
+						if chunk == nil {
+							return nil
+						}
+						if err := stream.Send(chunk); err != nil {
+							return err
+						}
+					default:
+						return nil
+					}
+				}
+			case chunk := <-liveCh:
+				if chunk == nil {
+					return nil
+				}
+				if err := stream.Send(chunk); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// Non-follow mode: dump ring buffer and close (legacy behaviour).
 	data := entry.ioBuf.Bytes()
 	if len(data) > 0 {
-		if err := stream.Send(&etroniumv1.IOChunk{
+		return stream.Send(&etroniumv1.IOChunk{
 			Stream: etroniumv1.IOChunk_STREAM_STDOUT,
 			Data:   data,
-		}); err != nil {
-			return err
-		}
+		})
 	}
 	return nil
 }

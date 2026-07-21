@@ -103,11 +103,17 @@ func (s *Server) Connect(stream etroniumv1.LordService_ConnectServer) error {
 	}
 	s.lords.Register(info)
 
+	// Phase 3.3: register lord in BPF maps for placement.
+	hostname := regCmd.GetHostname()
+	cpuShares := uint32(regCmd.GetAdvertisedCpuShares())
+	if err := RegisterLordBPF(sess.ctx, hostname, cpuShares, sess.logger); err != nil {
+		sess.logger.Warn("BPF map register failed (scheduler still runs but placement uses fallback)", "err", err)
+	}
+
 	// Phase 3.5: re-bind — если уже была Lord запись с тем же hostname
 	// (например lord-auto-reconnect с новым session_id), переносим все его
 	// процессы к новому lord_id. Это критично для S04 (net partition):
 	// lord-2 reconnect с новым session_id, но sleep процессы ещё живы на нём.
-	hostname := regCmd.GetHostname()
 	if hostname != "" {
 		if oldLordID := s.lords.FindByHostname(hostname); oldLordID != "" && oldLordID != lordID {
 			sess.logger.Info("lord re-bind: same hostname detected",
@@ -268,13 +274,17 @@ func (s *Server) handleStarted(sess *lordSession, started *etroniumv1.ProcessSta
 }
 
 // handleIo — IO chunk от lord'а, с явным process_id.
+// Phase 2: также fan-out в live StreamProcessIO subscribers через entry.notifyIO.
 func (s *Server) handleIo(sess *lordSession, io *etroniumv1.ProcessIo) {
 	entry, ok := s.processes.Get(io.ProcessId)
 	if !ok {
 		sess.logger.Warn("io for unknown process", "process_id", io.ProcessId)
 		return
 	}
+	// Ring buffer — для follow=false режима (late attach с буфером).
 	entry.ioBuf.Write(io.Chunk.GetData())
+	// Live subscribers — для follow=true режима (реальный streaming).
+	entry.notifyIO(io.Chunk)
 }
 
 // handleProcessExit — обрабатывает завершение процесса.
