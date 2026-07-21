@@ -150,6 +150,31 @@ services:
   # Phase D — 2 tenant'а, изолированы по tenant_id в scheduler.
   # Tenant только CLI-окружение, не persistent. host networking чтобы
   # CLI мог достучаться до :51061 с хоста.
+
+  # Phase BPF — schedulerd daemon загружает etronium BPF scheduler в kernel
+  # через bpftool. Host PID/IPC mount для доступа к /sys/kernel/sched_ext.
+  schedulerd:
+    image: etronium-mvp:runtime
+    container_name: mvp-schedulerd
+    network_mode: host
+    privileged: true
+    pid: host
+    ipc: host
+    volumes:
+      - /sys/fs/bpf:/sys/fs/bpf
+      - /sys/kernel/debug:/sys/kernel/debug
+      - /boot:/boot:ro
+      # Bind host bpftool DIRECTLY (the binary itself, not the wrapper script)
+      # — uses HOST kernel version matching for libbpf feature detection.
+      - /usr/lib/linux-tools/7.0.0-28-generic/bpftool:/usr/local/bin/etronium-bpftool:ro
+      # Host libbpf (1.7) for struct_ops operations.
+      - /lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:ro
+    command:
+      - schedulerd
+      - --bpf-obj=/opt/etronium/bpf/sched_ext_final.o
+      - --bpftool=/usr/local/bin/etronium-bpftool
+    restart: unless-stopped
+
   tenant-acme-corp:
     image: etronium-mvp:runtime
     container_name: mvp-tenant-corp
@@ -171,3 +196,4 @@ services:
 volumes:
   etronium-data:
     name: etronium-mvp-data
+

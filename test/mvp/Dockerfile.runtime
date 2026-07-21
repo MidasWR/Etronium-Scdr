@@ -12,6 +12,18 @@ COPY bin/lord                 /usr/local/bin/lord
 COPY bin/etronium             /usr/local/bin/etronium
 COPY bin/example-stateful     /usr/local/bin/example-stateful
 
+# Phase BPF — schedulerd daemon + sched_ext_final.o BPF object.
+# schedulerd loads the BPF object into host kernel via bpftool struct_ops register.
+COPY bin/schedulerd          /usr/local/bin/schedulerd
+COPY bin/bpf/sched_ext_final.o   /opt/etronium/bpf/sched_ext_final.o
+
+# We need bpftool + libbpf inside the image (for schedulerd daemon).
+# bpftool is provided by linux-tools-common + linux-tools-$(uname -r) on host.
+# In container, we just install linux-generic equivalents at build time.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bpftrace linux-tools-generic kmod \
+      && rm -rf /var/lib/apt/lists/*
+
 # Tenant alias — в новом дизайне клиент — `tenant`, а не `etronium`.
 RUN ln -sf /usr/local/bin/etronium /usr/local/bin/tenant
 
