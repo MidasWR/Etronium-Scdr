@@ -295,8 +295,9 @@ func (s *Server) handleIo(sess *lordSession, io *etroniumv1.ProcessIo) {
 	}
 	// Ring buffer — для follow=false режима (late attach с буфером).
 	entry.ioBuf.Write(io.Chunk.GetData())
-	// Live subscribers — для follow=true режима (реальный streaming).
-	entry.notifyIO(io.Chunk)
+	// Phase 2: live subscribers через StreamProcessIO (отложен).
+	// entry.notifyIO(io.Chunk)
+	_ = entry
 }
 
 // handleProcessExit — обрабатывает завершение процесса.

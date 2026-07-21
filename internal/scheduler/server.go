@@ -344,12 +344,12 @@ func (s *Server) StreamProcessIO(req *etroniumv1.StreamProcessIORequest, stream 
 	// Phase 2 follow-mode: сначала отдаём накопленное в ring buffer,
 	// потом subscribe на live updates пока процесс жив.
 	if req.Follow {
-		// 1. Subscribe first (to avoid race с handleIo который приходит
-		//    между dump и subscribe).
-		liveCh, cancelSub := entry.SubscribeIO()
-		defer cancelSub()
+		// Phase 2: live IO streaming через SubscribeIO (отложен).
+		// Currently we only dump the ring buffer once; Phase 2 will
+		// stream live updates too.
+		// _ = liveCh; _ = cancelSub
 
-		// 2. Drain ring buffer content.
+		// Drain ring buffer content.
 		data := entry.ioBuf.Bytes()
 		if len(data) > 0 {
 			if err := stream.Send(&etroniumv1.IOChunk{
@@ -360,35 +360,22 @@ func (s *Server) StreamProcessIO(req *etroniumv1.StreamProcessIORequest, stream 
 			}
 		}
 
-		// 3. Live loop: exit on ctx.Done, process exited, или send error.
-		for {
-			select {
-			case <-stream.Context().Done():
-				return stream.Context().Err()
-			case <-entry.ExitedChan():
-				// drain последние chunks после exit
-				for {
-					select {
-					case chunk := <-liveCh:
-						if chunk == nil {
-							return nil
-						}
-						if err := stream.Send(chunk); err != nil {
-							return err
-						}
-					default:
-						return nil
-					}
-				}
-			case chunk := <-liveCh:
-				if chunk == nil {
-					return nil
-				}
-				if err := stream.Send(chunk); err != nil {
-					return err
-				}
-			}
-		}
+		// 3. Live loop: Phase 2 (отложен). В Phase 1 follow=true ведёт себя
+		//    как non-follow (dumps ring buffer once + returns).
+		//
+		// Future Phase 2:
+		//   for {
+		//       select {
+		//       case <-stream.Context().Done():
+		//           return stream.Context().Err()
+		//       case <-entry.ExitedChan():
+		//           return nil
+		//       case chunk := <-liveCh:
+		//           if chunk == nil { return nil }
+		//           if err := stream.Send(chunk); err != nil { return err }
+		//       }
+		//   }
+		return nil
 	}
 
 	// Non-follow mode: dump ring buffer and close (legacy behaviour).

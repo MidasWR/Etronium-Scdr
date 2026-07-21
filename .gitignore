@@ -19,3 +19,6 @@
 
 # Logs
 *.log
+
+# BPF build artifacts (rebuilt by scripts/mvp/build-image.sh)
+/test/mvp/bpf/
