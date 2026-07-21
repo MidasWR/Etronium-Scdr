@@ -1,28 +1,29 @@
-# docker-compose.mvp.yml — Etronium MVP testbed для demo.
+# docker-compose.mvp.yml — Etronium MVP testbed для "почти-прод" e2e demo.
 #
 # Topology:
-#   1× frontend    (stateful front-end на "нашей VPS")
-#   3× lord        (представляют ресурсы школьников/лоrд-providers)
-#   1× tenant      (B2B клиент, подключается к frontend)
+#   1× frontend    (stateful front-end — наша "VPS" side)
+#   5× lord        (heterogeneous compute providers — школы, ноутбуки, edge)
+#   2× tenant      (B2B клиенты — acme-corp и acme-edu; изолированы друг от друга)
 #
-# Это "новый дизайн" поверх существующих binaries:
-#   - "frontend" binary naming = существующий `scheduler` binary
-#   - "lord"         = существующий `lord` binary
-#   - "tenant" CLI   = существующий `etronium` binary
+# Цель этой версии: можно грубо использовать в проде — есть persistence,
+# multi-tenant, heterogeneous lords, cgroup isolation per-tenant.
+# НЕТ: cyber-security hardening, mTLS, RBAC, OPA, sidecar mesh, observability
+# stack (Prometheus/Grafana), autoscaler, k8s operator. Это всё Phase 3+.
 #
-# Разница с chaos testbed:
-#   - Без chaos-runner (без нестабильности для demo)
-#   - С persistence (restart: unless-stopped)
-#   - Tenant в одной сети для удобного CLI
+# Phase A: 5 lords (school-A/B/C + edge-X/Y)
+# Phase D: 2 tenants в одном testbed, проверяем cross-tenant isolation
 #
 # Usage:
 #   docker compose -f test/mvp/docker-compose.yml up -d
 #   docker compose -f test/mvp/docker-compose.yml down
 #
-# Tenant commands (из host):
-#   ./bin/etronium process spawn --exec=/bin/sleep --arg=300
-#   ./bin/etronium process list
-#   ./bin/etronium lords
+# Tenant commands:
+#   ./bin/etronium --scheduler=127.0.0.1:51061 --tenant=acme-corp process spawn --exec=/bin/sleep --arg=300
+#   ./bin/etronium --scheduler=127.0.0.1:51061 --tenant=acme-corp process list
+#   ./bin/etronium --scheduler=127.0.0.1:51061 --tenant=acme-corp lords
+#
+#   ./bin/etronium --scheduler=127.0.0.1:51061 --tenant=acme-edu  process list
+#   (только acme-edu процессы, не acme-corp)
 
 services:
   frontend:
@@ -39,10 +40,17 @@ services:
       - SCHEDULER_PLACEMENT=weighted
       - SCHEDULER_WAL_PATH=/tmp/etronium/frontend.wal
       - SCHEDULER_RECOVERY_DEBOUNCE=10s
+      # Phase B — cgroup isolation per-tenant
+      - SCHEDULER_CGROUP_ROOT=/sys/fs/cgroup/etronium
+      - SCHEDULER_ENABLE_CGROUP=true
     volumes:
-      - /tmp/etronium:/tmp/etronium
+      - etronium-data:/tmp/etronium
+      # Phase B — mount cgroup v2 hierarchy для cgroup weight per-tenant
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     restart: unless-stopped
 
+  # Phase A — 5 lords с разными ресурсами (heterogeneous compute).
+  # Hostnames отражают "реальные" источники: школьные ноуты, edge boxes.
   lord-01:
     image: etronium-mvp:runtime
     container_name: mvp-lord-01
@@ -57,7 +65,7 @@ services:
       - --advertise-mem=4294967296
       - --log=info
     volumes:
-      - /tmp/etronium:/tmp/etronium
+      - etronium-data:/tmp/etronium
     depends_on:
       - frontend
     restart: unless-stopped
@@ -76,7 +84,7 @@ services:
       - --advertise-mem=2147483648
       - --log=info
     volumes:
-      - /tmp/etronium:/tmp/etronium
+      - etronium-data:/tmp/etronium
     depends_on:
       - frontend
     restart: unless-stopped
@@ -95,16 +103,71 @@ services:
       - --advertise-mem=3221225472
       - --log=info
     volumes:
-      - /tmp/etronium:/tmp/etronium
+      - etronium-data:/tmp/etronium
     depends_on:
       - frontend
     restart: unless-stopped
 
-  tenant:
+  # Новые lords — edge/enterprise профили для Phase A гетерогенности
+  lord-04:
     image: etronium-mvp:runtime
-    container_name: mvp-tenant
+    container_name: mvp-lord-04
+    network_mode: host
+    privileged: true
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:51061
+      - --hostname=lord-edge-X
+      - --advertise-cpu=8000       # мощный edge
+      - --advertise-mem=8589934592 # 8GB
+      - --log=info
+    volumes:
+      - etronium-data:/tmp/etronium
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+  lord-05:
+    image: etronium-mvp:runtime
+    container_name: mvp-lord-05
+    network_mode: host
+    privileged: true
+    tmpfs: /tmp
+    command:
+      - lord
+      - --scheduler=127.0.0.1:51061
+      - --hostname=lord-iot-Y
+      - --advertise-cpu=800        # слабый IoT
+      - --advertise-mem=536870912  # 512MB
+      - --log=info
+    volumes:
+      - etronium-data:/tmp/etronium
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+  # Phase D — 2 tenant'а, изолированы по tenant_id в scheduler.
+  # Tenant только CLI-окружение, не persistent. host networking чтобы
+  # CLI мог достучаться до :51061 с хоста.
+  tenant-acme-corp:
+    image: etronium-mvp:runtime
+    container_name: mvp-tenant-corp
     network_mode: host
     command: ["sleep", "infinity"]
     volumes:
-      - /tmp/etronium:/tmp/etronium
+      - etronium-data:/tmp/etronium
     restart: unless-stopped
+
+  tenant-acme-edu:
+    image: etronium-mvp:runtime
+    container_name: mvp-tenant-edu
+    network_mode: host
+    command: ["sleep", "infinity"]
+    volumes:
+      - etronium-data:/tmp/etronium
+    restart: unless-stopped
+
+volumes:
+  etronium-data:
+    name: etronium-mvp-data

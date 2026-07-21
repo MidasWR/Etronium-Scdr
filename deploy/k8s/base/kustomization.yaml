@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Etronium MVP k8s base.
+#
+# Структура:
+#   base/      — абстрактные manifests без replicas/namespace/etc
+#   overlays/
+#     dev/     — minikube/k3s single-node, debug env, low replicas
+#     prod/    — multi-node prod-like, scaled, real config
+#
+# Это Phase 1 k8s deploy: "почти-прод" MVP, без cyber/TLS/mTLS.
+# Для cyber/hardening — Phase 3+ (NetworkPolicy, PodSecurityStandards,
+# cert-manager, OPA, etc).
+
+resources:
+  - namespace.yaml
+  - frontend.yaml
+  - lord.yaml
+  - tenant.yaml
+  - rbac.yaml
+  - configmap.yaml
+  - pv.yaml
+
+images:
+  - name: etronium-mvp
+    newName: etronium/mvp
+    newTag: latest
+
+commonLabels:
+  app.kubernetes.io/part-of: etronium-mvp
+  app.kubernetes.io/managed-by: kustomize

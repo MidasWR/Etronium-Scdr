@@ -1,0 +1,31 @@
+# pv.yaml — PersistentVolumes для stateful data.
+#
+# Phase 1: local-path PVCs (single-node), ReadWriteOnce для WAL,
+# ReadWriteMany для state (cross-lord share).
+#
+# Phase 3+: distributed storage — CephFS, Longhorn, или cloud-specific
+# (EBS gp3 multi-attach, GCE PD, Azure Files).
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: etronium-frontend-wal
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName оставлен пустым — кластер сам выберет default StorageClass.
+  # Для k3s default = local-path. Для minikube = standard. Для prod = depends.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: etronium-shared-state
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi

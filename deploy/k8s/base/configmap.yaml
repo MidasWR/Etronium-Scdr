@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: etronium-config
+data:
+  # Scheduler runtime config — environment vars consumed by frontend pod.
+  # Mirrors docker-compose env в test/mvp/docker-compose.yml.
+  scheduler.env: |
+    SCHEDULER_HEARTBEAT_TTL=30s
+    SCHEDULER_PLACEMENT=weighted
+    SCHEDULER_RECOVERY_DEBOUNCE=10s
+    SCHEDULER_CGROUP_ROOT=/sys/fs/cgroup/etronium
+    SCHEDULER_ENABLE_CGROUP=true
+  # Lord runtime config — same env vars for each lord.
+  lord.env: |
+    ETRONIUM_LOG=info

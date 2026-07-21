@@ -1,10 +1,14 @@
 # Roadmap — Etronium
 
-> **Hybrid plan** (2026-07-21): Phase MVP demo = сегодня. sched_ext (Variant C) = на неделе.
-> F1 sched_ext заблокирован на kernel-side EINVAL (даже canonical bpftool не работает
-> на kernel 7.0.0-28-generic). Решение: prebuilt scx binaries proof, либо QEMU/KVM mainline 6.10.
-> Концепция ("VPS поверх army lord-providers") всё равно требует sched_ext для production-grade —
-> MVP это product prototype, не product. ADR-039.
+> **Updated 2026-07-21 19:30**: Phase MVP **e2e-acceptance 7/8 passed** — готов к грубому
+> использованию в проде. Phase MVP deploys в 2-х вариантах: docker-compose + k8s manifests.
+> Файлы: `test/mvp/docker-compose.yml`, `deploy/k8s/base/`, `deploy/k8s/overlays/{dev,prod}`,
+> `scripts/mvp/e2e-acceptance.sh`, `deploy/README.md`. **No cyber, no top-optimization.**
+>
+> **Sched_ext (F1/F1b) deferred** — все 10 путей BPF struct_ops register EINVAL на нашем
+> kernel 7.0.0-28-generic. scx_bpfland 1.1.2 работает на этом ядре — это доказывает что
+> kernel готов к sched_ext, но наш custom .o через cilium/bpftool/custom Go — нет.
+> Подробности в `Etronium-Scdr-BPF/docs/F1-status.md`. ADR-040.
 
 ---
 
