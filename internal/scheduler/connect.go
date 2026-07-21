@@ -271,6 +271,18 @@ func (s *Server) handleStarted(sess *lordSession, started *etroniumv1.ProcessSta
 		"process_id", started.ProcessId,
 		"local_pid", started.LocalPid,
 	)
+
+	// Phase 3.4: register task -> lord mapping in BPF so scx scheduler
+	// routes this task to lord's per-lord DSQ.
+	if info, ok := s.lords.Get(sess.lordID); ok && info != nil {
+		hostname := info.GetHostname()
+		if hostname != "" {
+			lordID := LordIDFromHostname(hostname)
+			if err := AssignTaskBPF(sess.ctx, uint32(started.LocalPid), lordID, sess.logger); err != nil {
+				sess.logger.Warn("AssignTaskBPF failed", "err", err)
+			}
+		}
+	}
 }
 
 // handleIo — IO chunk от lord'а, с явным process_id.
