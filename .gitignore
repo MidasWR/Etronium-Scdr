@@ -1,4 +1,4 @@
-# Go
+# Go build artifacts
 /bin/
 /dist/
 *.exe
@@ -22,3 +22,8 @@
 
 # BPF build artifacts (rebuilt by scripts/mvp/build-image.sh)
 /test/mvp/bpf/
+
+# Loose build artifacts (mistakenly produced by `go build` without -o)
+/etronium
+/scheduler
+/lord
