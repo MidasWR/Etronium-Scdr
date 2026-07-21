@@ -36,7 +36,8 @@ NUMA balancing                Process migration + weight rebalancing
 |---|---|
 | **[`docs/OPS-GUIDE.md`](./docs/OPS-GUIDE.md)** | **Operations: install / onboard / day-N troubleshooting** |
 | **[`docs/LORD-SETUP.md`](./docs/LORD-SETUP.md)** | **Onboarding a new lord (container or bare-metal)** |
-| **[`docs/TENANT-USAGE.md`](./docs/TENANT-USAGE.md)** | **Tenant CLI reference (spawn/kill/list/migrate)** |
+| **[`docs/TENANT-USAGE.md`](./docs/TENANT-USAGE.md)** | **Tenant CLI reference (run/ps/kill/wait)** |
+| **[`docs/AUTOSCALE.md`](./docs/AUTOSCALE.md)** | **Autoscale: ABS_AUTO planner (scheduler decides, never you)** |
 | [`docs/RESEARCH.md`](./docs/RESEARCH.md) | Исследование (ре-фрейм 2026-07-20) |
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | NUMA-аналогия, потоки Spawn/Migrate |
 | [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Phase 0–5: hello world → persistence |
@@ -90,50 +91,52 @@ Global flags:
 | `--tenant` | `anonymous` | tenant id |
 | `--json` | false | machine-readable output |
 
-Subcommands:
+Subcommands (flat — like supervisord/systemd-run):
 
 | Subcommand | Purpose |
 |---|---|
-| `tenant lords` | List registered lords (`hostname`, `advertised_cpu_shares`, `last_heartbeat`, …) |
+| `tenant run <exec> [args...]` | Spawn a new process (positional exec + args, `--cpu-shares`, `--mem-mb`, `--max-restarts`, `--state-dump`, `--prefer-lord`) |
+| `tenant ps [--running]` | List this tenant's processes (alias: `ls`, `list`) |
+| `tenant get <pid>` | Get state of one process |
+| `tenant wait <pid>` | Block until process exits (returns exit code) |
+| `tenant kill <pid>` | Send signal (default `SIGTERM`, `--signal=…`, `--force=SIGKILL`) |
 | `tenant status` | Fleet summary: lords count + healthy count + scheduler address |
-| `tenant process spawn` | Spawn a new process (`--exec`, `--arg ...`, `--resources`, `--prefer-lord`, `--max-restarts`, `--state-dump`) |
-| `tenant process list` | List this tenant's processes (`--running` filter) |
-| `tenant process get` | Get state of one process (`--local-pid`) |
-| `tenant process wait` | Block until process exits (returns exit code) |
-| `tenant process kill` | Send signal (default `SIGTERM`, `--signal=…`) |
-| `tenant process migrate` | Re-spawn on a different lord (fault-tolerant restart, not CRIU) |
-| `tenant token new` | Mint a tenant access token (Phase 3+ stub) |
-| `tenant token list` | List active tokens (Phase 3+ stub) |
-| `tenant token revoke` | Revoke a token (Phase 3+ stub) |
+| `tenant lords` | List registered lords (`hostname`, `advertised_cpu_shares`, `last_heartbeat`, …) |
+| `tenant token new\|list\|revoke` | Tenant access tokens (Phase 3+ stubs) |
 | `tenant format-fleet` | Pretty-print `lords --json` output as a table |
 | `tenant version` | Print version + commit |
+
+> **No `tenant migrate`** — autoscale inside scheduler handles all migration
+> and rebalancing automatically. See [`docs/AUTOSCALE.md`](./docs/AUTOSCALE.md).
 
 Examples:
 
 ```bash
 # Spawn a 60-second sleep on the fleet:
-tenant process spawn --exec=/bin/sleep --arg=60
+tenant run /bin/sleep 60
 
 # Spawn with explicit CPU/mem hint:
-tenant process spawn --exec=/bin/sleep --arg=300 \
-  --resources='{"cpu_shares":100,"mem_limit_bytes":104857600}'
+tenant run --cpu-shares=100 --mem-mb=100 /bin/sleep 300
 
 # Spawn with restart budget + state-dump for fault tolerance:
-tenant process spawn \
-  --exec=./bin/example-stateful \
+tenant run \
   --state-dump=/tmp/etronium/state/demo.json \
-  --max-restarts=10
+  --max-restarts=10 \
+  ./bin/example-stateful
 
-# Migrate to a specific lord (soft affinity):
-tenant process spawn --exec=/bin/sleep --arg=600 \
-  --prefer-lord=lord-school-C
+# Soft-affinity (hint, autoscale may override):
+tenant run --prefer-lord=lord-school-C /bin/sleep 600
 
 # Watch fleet + processes:
 tenant status --json | jq .
-tenant process list --running
+tenant ps --running
 
 # Wait for completion:
-tenant process wait --local-pid=<ulid>     # exit code 0..N
+tenant wait <pid>     # exit code 0..N
+
+# Manual signal escalation:
+tenant kill <pid>              # SIGTERM
+tenant kill --signal=KILL <pid>  # SIGKILL
 ```
 
 ### `lord` — donor machine (Go daemon)
@@ -181,13 +184,15 @@ Operator subcommands (positional, before `--addr`):
 |---|---|
 | `scheduler stats` | Dump SCHED_EXT kernel state + BPF map sizes (per-lord counters) |
 | `scheduler stats --json` | Machine-readable for Prometheus |
-| `scheduler migrate --hostname=X --shares=N` | Update `etr_lord_cpus` BPF map live (no lord restart) |
 | `scheduler --version` / `scheduler version` | Print version |
 
+> **No `scheduler migrate`** — autoscale handles all rebalancing automatically.
+> Tune via env vars (`ETRONIUM_AUTOSCALE_*`).
+
 ```bash
-# Live rebalance (run anywhere with gRPC access):
-scheduler migrate --hostname=lord-school-A --shares=8
-scheduler stats | jq '.lords[] | select(.hostname=="lord-school-A")'
+# Observability only:
+scheduler stats
+scheduler stats --json | jq .
 ```
 
 Full tenant reference: [`docs/TENANT-USAGE.md`](./docs/TENANT-USAGE.md).
@@ -203,9 +208,9 @@ docker compose -f test/docker-compose.yml up -d
 sleep 5
 
 # 3. С tenant CLI:
-./bin/etronium lords                                    # видим 3 lord'а
-./bin/etronium process spawn --exec=/bin/sleep --arg=60  # создать процесс
-./bin/etronium process list                             # список
+./bin/etronium lords                              # видим 3 lord'а
+./bin/etronium run /bin/sleep 60                  # создать процесс (flat CLI)
+./bin/etronium ps                                  # список
 
 # 4. 5-минутное демо для PM:
 ./scripts/demo-pm.sh
@@ -218,16 +223,16 @@ docker compose -f test/docker-compose.yml down
 
 ```bash
 # Spawn stateful app:
-./bin/etronium process spawn \
-    --exec=./bin/example-stateful \
+./bin/etronium run \
     --state-dump=/tmp/etronium/state/demo.json \
-    --max-restarts=10
+    --max-restarts=10 \
+    ./bin/example-stateful
 
 # Kill lord container:
 docker kill etronium-lord-02
 
 # Через 5–15 сек:
-./bin/etronium process list                  # процесс снова RUNNING, на другом lord'е
+./bin/etronium ps                              # процесс снова RUNNING, на другом lord'е
 cat /tmp/etronium/state/demo.json | jq .counter   # counter сохранился
 ```
 

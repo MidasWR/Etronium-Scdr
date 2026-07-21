@@ -18,8 +18,8 @@
 
 **Что показывается:**
 - 1 frontend + 3 lord-providers подключены
-- Tenant делает `process spawn` (auto-placement)
-- `process list` показывает все процессы как на одной машине
+- Tenant делает `run` (auto-placement)
+- `ps` показывает все процессы как на одной машине
 - Failure одного lord'а → auto-recovery, клиент не замечает
 
 **Что НЕ показывается:**
@@ -32,7 +32,7 @@
 - [x] `./scripts/mvp/build-image.sh` собирает image без ошибок
 - [x] `./scripts/mvp/up.sh -d` поднимает testbed
 - [x] `./scripts/mvp/demo.sh` проходит до конца без hangup
-- [x] `etronium process list` показывает ≥5 RUNNING процессов до и после failure
+- [x] `etronium ps` показывает ≥5 RUNNING процессов до и после failure
 - [x] Cleanup через `./scripts/mvp/down.sh` — чистый
 - [x] **Verified live 2026-07-21**: 8/8 RUNNING после lord-A kill, recovery <1s, 80s demo
 

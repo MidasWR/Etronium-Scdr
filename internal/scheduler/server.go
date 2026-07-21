@@ -44,6 +44,9 @@ type Server struct {
 	lastRecoveryAt map[string]time.Time
 	logger         *slog.Logger
 	bpftoolBin     string
+
+	// autoscale — populated by StartAutoscale; nil when autoscale disabled.
+	autoscale *AutoscaleState
 }
 
 // NewServer — конструктор.

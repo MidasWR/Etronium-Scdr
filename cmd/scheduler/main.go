@@ -37,7 +37,9 @@ import (
 var version = "dev"
 
 func main() {
-	// Phase 3.5 subcommands: "scheduler serve" (default), "scheduler migrate", "scheduler stats".
+	// Subcommands: "scheduler serve" (default), "scheduler stats".
+	// Manual "scheduler migrate" was REMOVED — autoscale handles rebalancing
+	// automatically (see internal/scheduler/autoscale.go).
 	if len(os.Args) >= 2 && os.Args[1] == "--version" {
 		fmt.Fprintf(os.Stderr, "scheduler %s\n", version)
 		os.Exit(0)
@@ -47,9 +49,6 @@ func main() {
 		os.Exit(0)
 	}
 	switch {
-	case len(os.Args) >= 2 && os.Args[1] == "migrate":
-		migrateCmd(os.Args[2:])
-		return
 	case len(os.Args) >= 2 && os.Args[1] == "stats":
 		statsCmd(os.Args[2:])
 		return
@@ -105,6 +104,12 @@ func main() {
 	// Graceful shutdown
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// Autoscale — ABS_AUTO планировщик. Disabled via ETRONIUM_AUTOSCALE=false.
+	// Reads cpu/mem cgroup + BPF etr_lord_stats + heartbeat freshness,
+	// runs every ETRONIUM_AUTOSCALE_INTERVAL (default 30s). Decisions are
+	// applied automatically: rebalance, migrate, blacklist.
+	srv.StartAutoscale(ctx, scheduler.DefaultAutoscaleConfig())
 
 	// gRPC server
 	grpcServer := grpc.NewServer(
@@ -192,26 +197,9 @@ func newLogger(level string) *slog.Logger {
 //
 // Usage:
 //   scheduler migrate --hostname <hostname> --shares <N>
-func migrateCmd(args []string) {
-	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
-	hostname := fs.String("hostname", "", "lord hostname (required)")
-	shares := fs.Uint("shares", 1, "new advertised CPU shares (1..16)")
-	_ = fs.Parse(args)
-	if *hostname == "" {
-		fmt.Fprintln(os.Stderr, "scheduler migrate: --hostname is required")
-		fs.Usage()
-		os.Exit(2)
-	}
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	newMask, err := scheduler.UpdateLordCPUMask(ctx, *hostname, uint32(*shares), logger)
-	if err != nil {
-		logger.Error("live migration failed", "err", err)
-		os.Exit(1)
-	}
-	fmt.Printf("OK hostname=%s shares=%d new_cpu_mask=0x%x\n", *hostname, *shares, newMask)
-}
+// CPU shares automatically via the autoscale loop. Manual one-shot
+// reweight is gone. If you need a manual knob, use the env var
+// ETRONIUM_THRESH_REBALANCE to tune sensitivity.
 
 // statsCmd — Phase 4 observability: dump scx kernel stats + BPF map sizes.
 //

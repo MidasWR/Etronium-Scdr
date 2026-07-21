@@ -49,7 +49,7 @@ header "STEP 2 — Tenant делает spawn (auto-placement)"
 
 PIDS=()
 for i in 1 2 3 4 5; do
-    out=$(./bin/etronium process spawn --exec=/bin/sleep --arg=600 2>&1 | head -5)
+    out=$(./bin/etronium run /bin/sleep 600 2>&1 | head -5)
     echo -e "${G}$out${N}"
     # Format: "process_id: 01KY..." (с пробелом после двоеточия) — v2+
     PID=$(echo "$out" | grep -oE 'process_id: [a-zA-Z0-9_]+' | awk '{print $2}')
@@ -63,7 +63,7 @@ sleep 3
 header "STEP 3 — Distributed ps: посмотрим где они живут"
 
 echo -e "${C}Tenant видит все процессы как будто они на одной машине:${N}"
-./bin/etronium process list
+./bin/etronium ps
 sleep 3
 
 # ───────────────────────────────────────────────────────────────
@@ -81,14 +81,14 @@ done
 
 echo ""
 echo -e "${G}После 35s recovery отработал:${N}"
-./bin/etronium process list
+./bin/etronium ps
 sleep 3
 
 # ───────────────────────────────────────────────────────────────
 header "STEP 5 — Все 5 процессов ВЫЖИЛИ (auto-respawn на других lord'ах)"
 
 EXPECTED=${#PIDS[@]}
-SURVIVED=$(./bin/etronium process list | grep -c "PROCESS_STATE_RUNNING" || echo 0)
+SURVIVED=$(./bin/etronium ps | grep -c "PROCESS_STATE_RUNNING" || echo 0)
 
 if [ "$SURVIVED" -ge "$EXPECTED" ]; then
     echo -e "${G}✅ ${SURVIVED}/${EXPECTED} процессов RUNNING после auto-recovery${N}"
@@ -102,7 +102,7 @@ sleep 3
 header "STEP 6 — Финал: client-VPS-view"
 
 echo -e "${C}Tenant никогда не знал что lord-A умер. Для него: VPS работает.${N}"
-./bin/etronium process list | head -20
+./bin/etronium ps | head -20
 echo ""
 echo -e "${C}Чтобы окончательно убедиться — посмотрим logs на frontend:${N}"
 docker logs mvp-frontend --tail=15 2>/dev/null | grep -E "recovery|respawn|disconnect" | head -10 || true

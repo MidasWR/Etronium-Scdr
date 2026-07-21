@@ -310,7 +310,7 @@ tenant --scheduler "$ETRONIUM_SCHEDULER" lords
 Or per-call:
 
 ```bash
-tenant --scheduler localhost:51061 process list
+tenant --scheduler localhost:51061 ps
 ```
 
 The default is `localhost:51061` for the `tenant` CLI and `:51061`
@@ -323,28 +323,28 @@ Env var `SCHEDULER_LISTEN` controls server side,
 
 ```bash
 # Spawn a long-running task (just like on a Linux VPS)
-tenant process spawn \
+tenant run \
     --exec /bin/sleep --arg 3600
 
 # JSON output for scripts
-tenant process spawn \
+tenant run \
     --exec /usr/bin/python3 --arg "-c" --arg "print('hi')" \
     --json
 
 # Spawn on a specific lord (soft affinity)
-tenant process spawn --exec /bin/sleep --arg 60 \
+tenant run --exec /bin/sleep --arg 60 \
     --prefer-lord lord-edge-X
 ```
 
 ### 4.4. Inspect and manage
 
 ```bash
-tenant process list                  # all my processes globally
-tenant process get <process_id>      # state, lord_id, local_pid
-tenant process wait <process_id>     # block until exit (returns exit code)
-tenant process kill <process_id>     # SIGTERM
-tenant process kill <process_id> --signal SIGKILL
-tenant process migrate <process_id>  # re-spawn on a different lord
+tenant ps                  # all my processes globally
+tenant get <process_id>      # state, lord_id, local_pid
+tenant wait <process_id>     # block until exit (returns exit code)
+tenant kill <process_id>     # SIGTERM
+tenant kill <process_id> --signal SIGKILL
+
 tenant lords                         # see registered lords (opaque IDs)
 ```
 
@@ -352,7 +352,7 @@ tenant lords                         # see registered lords (opaque IDs)
 
 ```bash
 # CPU/memory soft hint — scheduler passes to lord
-tenant process spawn \
+tenant run \
     --exec /bin/python3 \
     --resources '{"cpu_shares":100,"mem_limit_bytes":104857600}' \
     --arg "-c" --arg "import time; time.sleep(60)"
@@ -420,12 +420,12 @@ scheduler stats --json
 Triggered by the operator:
 
 ```bash
-scheduler migrate --hostname lord-edge-X --shares 4
+
 # → BPF map etr_lord_cpus[lord-edge-X] = 0x1 → 0xF (4 CPUs now available)
 
-scheduler migrate --hostname lord-iot-Y --shares 16
+
 # → full capacity
-scheduler migrate --hostname lord-iot-Y --shares 1
+
 # → contract back
 ```
 
@@ -510,7 +510,7 @@ registration fixes it.
 
 ```bash
 # Check where the scheduler placed it
-docker exec mvp-frontend /usr/local/bin/tenant process list
+docker exec mvp-frontend /usr/local/bin/tenant ps
 # → process_id, lord_id (opaque ULID)
 # That's the scheduler's internal ID, not a hostname.
 
@@ -528,10 +528,10 @@ crashed mid-spawn. WAL replay will respawn on a healthy lord.
 
 | Capability | Status | Notes |
 |------------|--------|-------|
-| `tenant process spawn/kill/list/wait/get` | ✅ working | MVP demo |
-| `tenant process migrate` (re-spawn) | ✅ working | Phase 3.4 |
+| `tenant run/kill/list/wait/get` | ✅ working | MVP demo |
+| `
 | `scheduler stats` | ✅ working | Phase 4 |
-| `scheduler migrate --hostname X --shares N` | ✅ working | Phase 3.5 |
+| `
 | BPF sched_ext enabled | ✅ working | kernel 7.0+ |
 | SCHED_EXT policy on lord-spawned tasks | ✅ working | Phase 5 |
 | CRIU live migration (no restart) | ❌ Phase 2+ | WIP design doc |
@@ -549,9 +549,9 @@ See [docs/ROADMAP.md](./ROADMAP.md) for the full timeline.
 - [ ] `docker ps` shows all containers UP
 - [ ] `cat /sys/kernel/sched_ext/state` → `enabled`
 - [ ] `scheduler stats` → `nr_rejected = 0`, ≥1 entry per `etr_*` map
-- [ ] `tenant process spawn` works
+- [ ] `tenant run` works
 - [ ] `scheduler migrate` works (BPF map updates visible)
-- [ ] Lord crash test: `docker stop mvp-lord-XX` → `tenant process list`
+- [ ] Lord crash test: `docker stop mvp-lord-XX` → `tenant ps`
       shows processes re-spawned on a healthy lord
 - [ ] WAL recovery: `docker restart mvp-frontend` → processes
       restored from `etronium-mvp-data` volume

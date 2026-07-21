@@ -59,19 +59,19 @@ sudo /usr/local/bin/installer.sh uninstall
 
 ```bash
 tenant lords                                               # what lords exist
-tenant process spawn --exec /bin/sleep --arg 3600          # spawn a process
-tenant process list                                        # all your processes
-tenant process get <id>                                    # detailed state
-tenant process wait <id>                                   # block on exit
-tenant process kill <id>                                   # SIGTERM
-tenant process migrate <id>                                # re-spawn on a different lord
+tenant run --exec /bin/sleep --arg 3600          # spawn a process
+tenant ps                                        # all your processes
+tenant get <id>                                    # detailed state
+tenant wait <id>                                   # block on exit
+tenant kill <id>                                   # SIGTERM
+
 ```
 
 ## Scheduler-side
 
 ```bash
 scheduler stats                                           # /sys/kernel/sched_ext + BPF maps
-scheduler migrate --hostname=lord-edge-X --shares=4       # rebalance CPU mask
+(autoscale handles this — env: ETRONIUM_THRESH_REBALANCE)       # rebalance CPU mask
 ```
 
 ## Troubleshooting

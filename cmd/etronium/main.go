@@ -1,14 +1,19 @@
 // Command etronium — CLI клиент tenant'а (арендатора).
 //
-// Subcommands:
-//   etronium process spawn   — Spawn
-//   etronium process list    — ListProcesses
-//   etronium process get     — GetProcess
-//   etronium process kill    — Kill
-//   etronium process wait    — Wait
-//   etronium process attach  — StreamProcessIO (Phase 2)
-//   etronium process watch   — WatchProcess (Phase 2)
-//   etronium lords           — ListLords
+// Flat subcommand interface — like supervisord/systemd-run:
+//
+//	etronium run <exec> [args...]            — spawn
+//	etronium ps [--running]                  — list this tenant's processes
+//	etronium get <pid>                       — get one process state
+//	etronium kill <pid> [--signal=N] [--force] — send signal
+//	etronium wait <pid> [--timeout=N]        — block until exit
+//	etronium status                           — fleet summary
+//	etronium lords                            — list registered lords
+//	etronium token ...                        — Phase 3+ stub
+//	etronium version                          — print CLI version
+//
+// Все миграции/ребалансы делает autoscale внутри scheduler'а автоматически
+// (см. internal/scheduler/autoscale.go). Ручных migrate нет.
 package main
 
 import (
@@ -47,10 +52,14 @@ func main() {
 		envOr("ETRONIUM_TENANT", "anonymous"), "tenant id (арендатор)")
 	rootCmd.PersistentFlags().BoolVar(&outputJSON, "json", false, "JSON output")
 
-	rootCmd.AddCommand(processCmd())
+	rootCmd.AddCommand(runCmd())
+	rootCmd.AddCommand(psCmd())
+	rootCmd.AddCommand(getCmd())
+	rootCmd.AddCommand(killCmd())
+	rootCmd.AddCommand(waitCmd())
+	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(lordsCmd())
 	rootCmd.AddCommand(tokenCmd())
-	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(formatFleetCmd())
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "version",
@@ -65,77 +74,31 @@ func main() {
 	}
 }
 
-func processCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "process",
-		Short: "Управление процессами",
-	}
-	c.AddCommand(spawnCmd())
-	c.AddCommand(listCmd())
-	c.AddCommand(getCmd())
-	c.AddCommand(killCmd())
-	c.AddCommand(waitCmd())
-	c.AddCommand(migrateCmd())
-	return c
-}
-
-func migrateCmd() *cobra.Command {
+// ───────────────────────────────────────────────────────────────────────
+// run — spawn a new process. Positional exec + args.
+//
+//	etronium run /bin/sleep 60
+//	etronium run /bin/sh -c "while true; do echo hi; sleep 1; done"
+//
+// Optional resource/prefer/restart flags before the positional exec:
+//
+//	etronium run --cpu-shares=100 --mem-mb=100 --max-restarts=10 /bin/sleep 60
+func runCmd() *cobra.Command {
 	var (
-		toLord string
-		auto   bool
-	)
-	c := &cobra.Command{
-		Use:   "migrate <process_id>",
-		Short: "Re-spawn process on a different lord (fault-tolerant restart, NOT CRIU migration)",
-		Long: "Phase 3.4 fault-tolerance: process is re-launched on a different lord with the same exec/argv/env. " +
-			"State is recovered from $ETRONIUM_STATE_DUMP if the application opted in via V5 state serialization.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if !auto && toLord == "" {
-				return fmt.Errorf("either --to=<lord_id> or --auto required")
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			client, conn, err := dial(ctx)
-			if err != nil {
-				return err
-			}
-			defer conn.Close()
-			resp, err := client.Migrate(ctx, &etroniumv1.MigrateRequest{
-				ProcessId:    args[0],
-				TargetLordId: toLord,
-				Auto:         auto,
-			})
-			if err != nil {
-				return err
-			}
-			fmt.Printf("acknowledged=%v state=%s new_lord=%s new_local_pid=%d\n",
-				resp.Acknowledged, resp.CurrentState.String(),
-				resp.NewLordId, resp.NewLocalPid)
-			return nil
-		},
-	}
-	c.Flags().StringVar(&toLord, "to", "", "target lord_id (mutually exclusive with --auto)")
-	c.Flags().BoolVar(&auto, "auto", false, "scheduler picks best lord")
-	return c
-}
-
-func spawnCmd() *cobra.Command {
-	var (
-		execPath  string
-		argv      []string
-		resources string
-		preferLord string
-		maxRestarts int32
+		cpuShares    int32
+		memMB        int32
+		preferLord   string
+		maxRestarts  int32
 		stateDump    string
 	)
 	c := &cobra.Command{
-		Use:   "spawn",
+		Use:   "run <exec> [args...]",
 		Short: "Spawn a new process",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if execPath == "" {
-				return fmt.Errorf("--exec required")
-			}
+			execPath := args[0]
+			argv := args[1:]
+
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
@@ -146,17 +109,19 @@ func spawnCmd() *cobra.Command {
 			defer conn.Close()
 
 			req := &etroniumv1.SpawnRequest{
-				TenantId:           tenantID,
-				ExecPath:           execPath,
-				Argv:               argv,
-				PreferLordId:       preferLord,
-				MaxRestarts:        maxRestarts,
-				StateDumpPathHint:  stateDump,
+				TenantId:          tenantID,
+				ExecPath:          execPath,
+				Argv:              argv,
+				PreferLordId:      preferLord,
+				MaxRestarts:       maxRestarts,
+				StateDumpPathHint: stateDump,
 			}
-			if resources != "" {
-				req.Resources = parseResources(resources)
+			if cpuShares > 0 || memMB > 0 {
+				req.Resources = &etroniumv1.ResourceSpec{
+					CpuShares:       cpuShares,
+					MemLimitBytes:   int64(memMB) * 1024 * 1024,
+				}
 			}
-
 			info, err := client.Spawn(ctx, req)
 			if err != nil {
 				return err
@@ -165,20 +130,21 @@ func spawnCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&execPath, "exec", "", "executable path (required)")
-	c.Flags().StringSliceVar(&argv, "arg", nil, "argv (repeatable)")
-	c.Flags().StringVar(&resources, "resources", "", "resources JSON e.g. '{\"cpu_shares\":100,\"mem_limit_bytes\":104857600}'")
-	c.Flags().Int32Var(&maxRestarts, "max-restarts", 10, "max restart count on lord failure (0..N, -1=unlimited)")
-	c.Flags().StringVar(&stateDump, "state-dump", "", "hint path for V5 application state serialization (lord exposes it as $ETRONIUM_STATE_DUMP)")
-	c.Flags().StringVar(&preferLord, "prefer-lord", "", "soft-affinity to lord id")
+	c.Flags().Int32Var(&cpuShares, "cpu-shares", 0, "CPU shares (100 = 1 core)")
+	c.Flags().Int32Var(&memMB, "mem-mb", 0, "memory limit in MB")
+	c.Flags().Int32Var(&maxRestarts, "max-restarts", 10, "max restarts on lord failure (0..N, -1=unlimited)")
+	c.Flags().StringVar(&stateDump, "state-dump", "", "V5 application state-dump path")
+	c.Flags().StringVar(&preferLord, "prefer-lord", "", "soft-affinity lord id (hint, scheduler may override)")
 	return c
 }
 
-func listCmd() *cobra.Command {
+// ps — list this tenant's processes.
+func psCmd() *cobra.Command {
 	var onlyRunning bool
 	c := &cobra.Command{
-		Use:   "list",
+		Use:   "ps",
 		Short: "List tenant processes",
+		Aliases: []string{"list", "ls"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -187,7 +153,6 @@ func listCmd() *cobra.Command {
 				return err
 			}
 			defer conn.Close()
-
 			resp, err := client.ListProcesses(ctx, &etroniumv1.ListProcessesRequest{
 				TenantId:    tenantID,
 				OnlyRunning: onlyRunning,
@@ -212,6 +177,7 @@ func listCmd() *cobra.Command {
 	return c
 }
 
+// get — process state for one pid.
 func getCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <process_id>",
@@ -235,6 +201,7 @@ func getCmd() *cobra.Command {
 	}
 }
 
+// kill — send signal (default SIGTERM=15, --force=SIGKILL=9).
 func killCmd() *cobra.Command {
 	var (
 		signal int32
@@ -269,6 +236,7 @@ func killCmd() *cobra.Command {
 	return c
 }
 
+// wait — block until process exits (returns exit code).
 func waitCmd() *cobra.Command {
 	var timeoutSec int32
 	c := &cobra.Command{
@@ -298,6 +266,7 @@ func waitCmd() *cobra.Command {
 	return c
 }
 
+// lords — list registered lords.
 func lordsCmd() *cobra.Command {
 	var onlyHealthy bool
 	return &cobra.Command{
@@ -330,94 +299,7 @@ func lordsCmd() *cobra.Command {
 	}
 }
 
-// --- helpers ---
-
-func dial(ctx context.Context) (etroniumv1.SchedulerServiceClient, *grpc.ClientConn, error) {
-	conn, err := grpc.NewClient(schedulerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, nil, fmt.Errorf("dial scheduler %s: %w", schedulerAddr, err)
-	}
-	return etroniumv1.NewSchedulerServiceClient(conn), conn, nil
-}
-
-func printProcessInfo(p *etroniumv1.ProcessInfo) {
-	if outputJSON {
-		out, _ := json.MarshalIndent(p, "", "  ")
-		fmt.Println(string(out))
-		return
-	}
-	fmt.Printf("process_id: %s\n", p.Ref.ProcessId)
-	fmt.Printf("lord_id:    %s\n", p.Ref.LordId)
-	fmt.Printf("local_pid:  %d\n", p.Ref.LocalPid)
-	fmt.Printf("state:      %s\n", p.State.String())
-	fmt.Printf("exec:       %s %v\n", p.ExecPath, p.Argv)
-	if p.ExitCode != 0 || p.ExitSignal != 0 {
-		fmt.Printf("exit_code:  %d  exit_signal: %d\n", p.ExitCode, p.ExitSignal)
-	}
-	if p.MemPeakBytes > 0 {
-		fmt.Printf("mem_peak:   %d bytes\n", p.MemPeakBytes)
-	}
-}
-
-func parseResources(s string) *etroniumv1.ResourceSpec {
-	var r etroniumv1.ResourceSpec
-	if err := json.Unmarshal([]byte(s), &r); err != nil {
-		fmt.Fprintf(os.Stderr, "warn: parse resources: %v\n", err)
-		return nil
-	}
-	return &r
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-// ───────────────────────────────────────────────────────────────────────
-// token / status / format-fleet subcommands (one-command surface area)
-
-func tokenCmd() *cobra.Command {
-	c := &cobra.Command{
-		Use:   "token",
-		Short: "Manage tenant access tokens (Phase 3+ stub)",
-	}
-	c.AddCommand(tokenNewCmd(), tokenListCmd(), tokenRevokeCmd())
-	return c
-}
-
-func tokenNewCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "new",
-		Short: "Issue a new tenant token (Phase 3+).",
-		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Fprintln(os.Stderr, "tenant token new: not implemented in Phase 1 (MVP runs without auth).")
-		},
-	}
-}
-
-func tokenListCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list",
-		Short: "List tenant tokens (Phase 3+).",
-		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Fprintln(os.Stderr, "tenant token list: not implemented in Phase 1.")
-		},
-	}
-}
-
-func tokenRevokeCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "revoke",
-		Short: "Revoke a tenant token (Phase 3+).",
-		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Fprintln(os.Stderr, "tenant token revoke: not implemented in Phase 1.")
-		},
-	}
-}
-
-// statusCmd — fleet status from scheduler side. Read-only JSON dump.
+// status — fleet summary.
 func statusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -459,18 +341,47 @@ func statusCmd() *cobra.Command {
 	}
 }
 
-// countHealthy — helper for statusCmd.
-func countHealthy(lords []*etroniumv1.Lord) int {
-	n := 0
-	for _, l := range lords {
-		if l.GetHealthy() {
-			n++
-		}
+// token — Phase 3+ stub.
+func tokenCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "token",
+		Short: "Manage tenant access tokens (Phase 3+ stub)",
 	}
-	return n
+	c.AddCommand(tokenNewCmd(), tokenListCmd(), tokenRevokeCmd())
+	return c
 }
 
-// formatFleetCmd — humanize the JSON fleet dump (called by installer.sh status).
+func tokenNewCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "new",
+		Short: "Issue a new tenant token (Phase 3+).",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Fprintln(os.Stderr, "tenant token new: not implemented in Phase 1 (MVP runs without auth).")
+		},
+	}
+}
+
+func tokenListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List tenant tokens (Phase 3+).",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Fprintln(os.Stderr, "tenant token list: not implemented in Phase 1.")
+		},
+	}
+}
+
+func tokenRevokeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "revoke",
+		Short: "Revoke a tenant token (Phase 3+).",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Fprintln(os.Stderr, "tenant token revoke: not implemented in Phase 1.")
+		},
+	}
+}
+
+// format-fleet — humanize JSON fleet dump (used by installer.sh status).
 func formatFleetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "format-fleet",
@@ -492,9 +403,56 @@ func formatFleetCmd() *cobra.Command {
 	}
 }
 
+// ───────────────────────────────────────────────────────────────────────
+// helpers
+
+func dial(ctx context.Context) (etroniumv1.SchedulerServiceClient, *grpc.ClientConn, error) {
+	conn, err := grpc.NewClient(schedulerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, nil, fmt.Errorf("dial scheduler %s: %w", schedulerAddr, err)
+	}
+	return etroniumv1.NewSchedulerServiceClient(conn), conn, nil
+}
+
+func printProcessInfo(p *etroniumv1.ProcessInfo) {
+	if outputJSON {
+		out, _ := json.MarshalIndent(p, "", "  ")
+		fmt.Println(string(out))
+		return
+	}
+	fmt.Printf("process_id: %s\n", p.Ref.ProcessId)
+	fmt.Printf("lord_id:    %s\n", p.Ref.LordId)
+	fmt.Printf("local_pid:  %d\n", p.Ref.LocalPid)
+	fmt.Printf("state:      %s\n", p.State.String())
+	fmt.Printf("exec:       %s %v\n", p.ExecPath, p.Argv)
+	if p.ExitCode != 0 || p.ExitSignal != 0 {
+		fmt.Printf("exit_code:  %d  exit_signal: %d\n", p.ExitCode, p.ExitSignal)
+	}
+	if p.MemPeakBytes > 0 {
+		fmt.Printf("mem_peak:   %d bytes\n", p.MemPeakBytes)
+	}
+}
+
+func countHealthy(lords []*etroniumv1.Lord) int {
+	n := 0
+	for _, l := range lords {
+		if l.GetHealthy() {
+			n++
+		}
+	}
+	return n
+}
+
 func boolStr(b bool, t, f string) string {
 	if b {
 		return t
 	}
 	return f
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

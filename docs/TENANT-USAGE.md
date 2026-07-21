@@ -64,14 +64,14 @@ tenant --scheduler=etronium.example.com:51061 lords
 ### Basic
 
 ```bash
-tenant process spawn --exec /bin/sleep --arg 3600
+tenant run --exec /bin/sleep --arg 3600
 # output: process_id=01K...Y5A state=PROCESS_STATE_PENDING
 ```
 
 ### With arguments
 
 ```bash
-tenant process spawn \
+tenant run \
     --exec /usr/bin/python3 \
     --arg "-c" \
     --arg "print('hello from the VPS')"
@@ -80,7 +80,7 @@ tenant process spawn \
 ### With output as JSON
 
 ```bash
-tenant process spawn \
+tenant run \
     --exec /bin/sleep --arg 30 \
     --json | jq .
 ```
@@ -88,7 +88,7 @@ tenant process spawn \
 ### Soft-affinity to a specific lord
 
 ```bash
-tenant process spawn \
+tenant run \
     --exec /bin/python3 \
     --prefer-lord lord-edge-X \
     --arg "-c" --arg "import time; time.sleep(60)"
@@ -100,7 +100,7 @@ if it's not healthy or has no capacity.)
 ### With resource hints
 
 ```bash
-tenant process spawn \
+tenant run \
     --exec /usr/bin/python3 \
     --resources '{"cpu_shares":200,"mem_limit_bytes":1073741824}' \
     --arg "-c" --arg "import time; time.sleep(60)"
@@ -112,7 +112,7 @@ memory.max in bytes. 1 GiB = 1073741824.)
 ### Stateful: re-execute through crashes
 
 ```bash
-tenant process spawn \
+tenant run \
     --exec /usr/local/bin/example-stateful \
     --state-dump /var/lib/state.json \
     --max-restarts 5
@@ -128,7 +128,7 @@ restart count (default 10; -1 = unlimited).
 ### List your processes
 
 ```bash
-tenant process list
+tenant ps
 # PROCESS_ID                  STATE                EXEC
 # 01KY381G9HFV95121HGDK42S2F  PROCESS_STATE_RUNNING  /bin/sleep
 # 01KY381GCNGXECJN63X8RP4MF6  PROCESS_STATE_RUNNING  /bin/sleep
@@ -138,30 +138,30 @@ tenant process list
 ### Get a specific process
 
 ```bash
-tenant process get 01KY381G9HFV95121HGDK42S2F
+tenant get 01KY381G9HFV95121HGDK42S2F
 # state, lord_id (opaque ULID), local_pid, exec_path, argv, created_at
 ```
 
 ### Wait for completion (returns exit code)
 
 ```bash
-tenant process spawn --exec /bin/sh --arg -c --arg "exit 42"
+tenant run --exec /bin/sh --arg -c --arg "exit 42"
 # process_id=01K...H
-tenant process wait 01K...H
+tenant wait 01K...H
 # exit_code=42
 ```
 
 ### Kill
 
 ```bash
-tenant process kill 01K...H                  # SIGTERM (default)
-tenant process kill 01K...H --signal SIGKILL # SIGKILL
+tenant kill 01K...H                  # SIGTERM (default)
+tenant kill 01K...H --signal SIGKILL # SIGKILL
 ```
 
 ### Force re-spawn on another lord
 
 ```bash
-tenant process migrate 01K...H
+
 # → kills the process on its current lord, re-spawns on a different lord.
 # Note: this is NOT a transparent live migration — the process restarts
 # from scratch. State-preserving migration (CRIU) is Phase 2+.
@@ -173,7 +173,7 @@ tenant process migrate 01K...H
 
 ```bash
 # Spawn a long-lived HTTP server
-tenant process spawn \
+tenant run \
     --exec /usr/bin/python3 \
     --arg -m --arg http.server --arg 8080
 
@@ -188,7 +188,7 @@ tenant process spawn \
 # trivial placement. Add a tiny sleep between spawns to give the
 # scheduler time to balance.
 for i in 1 2 3 4 5 6 7 8; do
-    tenant process spawn \
+    tenant run \
         --exec /usr/bin/python3 \
         --arg -c --arg "import time; time.sleep(3600)" &
     sleep 0.5
@@ -205,7 +205,7 @@ placement.)
 ```bash
 # If your process writes state to a periodic file, the lord passes
 # that path through $ETRONIUM_STATE_DUMP env var.
-tenant process spawn \
+tenant run \
     --exec /usr/bin/python3 \
     --arg -c --arg "import os, json; print(os.environ['ETRONIUM_STATE_DUMP'])" \
     --state-dump /var/lib/state.json
@@ -220,7 +220,7 @@ tenant process spawn \
 | `rpc error: Unavailable` after a minute | Scheduler crashed | Check `docker logs mvp-frontend` |
 | `no lords healthy` | All lords disconnected | Check `tenant lords`, retry lords |
 | Process state `PROCESS_STATE_RESTARTING` repeatedly | Lord keeps crashing on this process | Check `--max-restarts` or process logic |
-| `process not found` | Wrong `process_id` (case-sensitive ULID) | Re-run `tenant process list` and copy fresh |
+| `process not found` | Wrong `process_id` (case-sensitive ULID) | Re-run `tenant ps` and copy fresh |
 
 ## 7. Security
 

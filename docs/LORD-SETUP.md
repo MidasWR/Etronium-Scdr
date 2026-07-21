@@ -206,7 +206,7 @@ The lord **does not need a restart** for capacity changes. The
 operator runs:
 
 ```bash
-docker exec mvp-frontend /usr/local/bin/scheduler migrate \
+docker exec mvp-frontend /usr/local/bin/
     --hostname lord-new-box \
     --shares 8
 # → etr_lord_cpus[hash(lord-new-box)] = 0xFF
