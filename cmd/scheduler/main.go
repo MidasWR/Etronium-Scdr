@@ -45,7 +45,7 @@ func main() {
 	}
 
 	var (
-		addr     = flag.String("addr", ":50061", "gRPC listen address")
+		addr     = flag.String("addr", ":51061", "gRPC listen address")
 		logLevel = flag.String("log", "info", "log level (debug|info|warn|error)")
 	)
 	flag.Parse()

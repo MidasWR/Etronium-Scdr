@@ -34,14 +34,17 @@ NUMA balancing                Process migration + weight rebalancing
 
 | Файл | Назначение |
 |---|---|
+| **[`docs/OPS-GUIDE.md`](./docs/OPS-GUIDE.md)** | **Operations: install / onboard / day-N troubleshooting** |
+| **[`docs/LORD-SETUP.md`](./docs/LORD-SETUP.md)** | **Onboarding a new lord (container or bare-metal)** |
+| **[`docs/TENANT-USAGE.md`](./docs/TENANT-USAGE.md)** | **Tenant CLI reference (spawn/kill/list/migrate)** |
 | [`docs/RESEARCH.md`](./docs/RESEARCH.md) | Исследование (ре-фрейм 2026-07-20) |
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | NUMA-аналогия, потоки Spawn/Migrate |
 | [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Phase 0–5: hello world → persistence |
 | [`docs/STACK.md`](./docs/STACK.md) | Конкретные библиотеки, версии |
 | [`docs/PROTO.md`](./docs/PROTO.md) | gRPC контракт v2, FSM процессов |
-| [`docs/DECISIONS.md`](./docs/DECISIONS.md) | ADR-style журнал (23 записи) |
+| [`docs/DECISIONS.md`](./docs/DECISIONS.md) | ADR-style журнал |
 | [`docs/OPEN-QUESTIONS.md`](./docs/OPEN-QUESTIONS.md) | Нерешённые вопросы |
-| [`docs/openapi/etronium.swagger.json`](./docs/openapi/etronium.swagger.json) | Сгенерированный swagger (10 paths, 35 types) |
+| `BPF-side` docs | [`../Etronium-Scdr-BPF/docs/`](../Etronium-Scdr-BPF/docs/) |
 
 ## Контракт
 
