@@ -39,18 +39,10 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 # ─────────────────────────────── Subcommand dispatch
+# Args are parsed below; case statement runs AFTER all function
+# definitions (bash functions are not hoisted).
 subcmd="${1:-help}"
 shift || true
-
-case "$subcmd" in
-    scheduler|lord|tenant) cmd_install "$@" ;;
-    token)                 cmd_token  "$@" ;;
-    status)                cmd_status "$@" ;;
-    update)                cmd_update "$@" ;;
-    uninstall)             cmd_uninstall "$@" ;;
-    help|--help|-h|"")     cmd_help ;;
-    *)                     fail "unknown subcommand: $subcmd (try 'help')" ;;
-esac
 
 # ═══════════════════════════════ Implementation ═══════════════════════════════
 
@@ -368,3 +360,14 @@ cmd_uninstall() {
         echo "      sudo rm -rf $STATE_DIR"
     fi
 }
+
+# ─────────────────────────────── Dispatch (must run after all functions)
+case "$subcmd" in
+    scheduler|lord|tenant) cmd_install "$@" ;;
+    token)                 cmd_token  "$@" ;;
+    status)                cmd_status "$@" ;;
+    update)                cmd_update "$@" ;;
+    uninstall)             cmd_uninstall "$@" ;;
+    help|--help|-h|"")     cmd_help ;;
+    *)                     fail "unknown subcommand: $subcmd (try 'help')" ;;
+esac
