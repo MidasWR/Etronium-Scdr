@@ -173,6 +173,7 @@ services:
       - schedulerd
       - --bpf-obj=/opt/etronium/bpf/sched_ext_final.o
       - --bpftool=/usr/local/bin/etronium-bpftool
+      - --link-dir=/sys/fs/bpf/etronium/sched
     restart: unless-stopped
 
   tenant-acme-corp:
