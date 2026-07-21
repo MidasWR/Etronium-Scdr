@@ -1,7 +1,10 @@
 # Roadmap — Etronium
 
-> **Phase MVP** = demo завтра. Phase 2+ = production-grade.
-> MVP редизайн (jul-2026): отказались от варианта A (PRU 6.12+ timeline) ради quick-wins.
+> **Hybrid plan** (2026-07-21): Phase MVP demo = сегодня. sched_ext (Variant C) = на неделе.
+> F1 sched_ext заблокирован на kernel-side EINVAL (даже canonical bpftool не работает
+> на kernel 7.0.0-28-generic). Решение: prebuilt scx binaries proof, либо QEMU/KVM mainline 6.10.
+> Концепция ("VPS поверх army lord-providers") всё равно требует sched_ext для production-grade —
+> MVP это product prototype, не product. ADR-039.
 
 ---
 
@@ -22,11 +25,12 @@
 - Lord-provider onboarding/anti-fraud (Phase 5)
 
 **Acceptance:**
-- [ ] `./scripts/mvp/build-image.sh` собирает image без ошибок
-- [ ] `./scripts/mvp/up.sh -d` поднимает testbed
-- [ ] `./scripts/mvp/demo.sh` проходит до конца без hangup
-- [ ] `etronium process list` показывает ≥5 RUNNING процессов до и после failure
-- [ ] Cleanup через `./scripts/mvp/down.sh` — чистый
+- [x] `./scripts/mvp/build-image.sh` собирает image без ошибок
+- [x] `./scripts/mvp/up.sh -d` поднимает testbed
+- [x] `./scripts/mvp/demo.sh` проходит до конца без hangup
+- [x] `etronium process list` показывает ≥5 RUNNING процессов до и после failure
+- [x] Cleanup через `./scripts/mvp/down.sh` — чистый
+- [x] **Verified live 2026-07-21**: 8/8 RUNNING после lord-A kill, recovery <1s, 80s demo
 
 **Структура:**
 ```
