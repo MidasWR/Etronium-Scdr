@@ -1,5 +1,5 @@
 # goreleaser config for Etronium-Scdr userspace daemon binaries.
-# Cross-compiles scheduler, lord, etronium, schedulerd for linux/amd64 + arm64.
+# Cross-compiles scheduler, lord, etronium for linux/amd64 + arm64.
 
 project_name: etronium
 
@@ -21,7 +21,12 @@ builds:
       - arm64
     flags:
       - -trimpath
-      - -ldflags=-s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    ldflags:
+      - -s
+      - -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
   - id: lord
     main: ./cmd/lord
     binary: lord
@@ -34,7 +39,12 @@ builds:
       - arm64
     flags:
       - -trimpath
-      - -ldflags=-s -w -X main.version={{.Version}}
+    ldflags:
+      - -s
+      - -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
   - id: etronium
     main: ./cmd/etronium
     binary: tenant
@@ -47,7 +57,12 @@ builds:
       - arm64
     flags:
       - -trimpath
-      - -ldflags=-s -w -X main.version={{.Version}}
+    ldflags:
+      - -s
+      - -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
 
 archives:
   - id: default
@@ -58,10 +73,8 @@ archives:
         format: tar.gz
     files:
       - README.md
-      - LICENSE*
       - docs/CHEATSHEET.md
       - scripts/installer.sh
-      - scripts/etronium-exit
 
 checksum:
   name_template: 'checksums.txt'
