@@ -62,7 +62,7 @@ gRPC API в [`proto/etronium/v1/etronium.proto`](./proto/etronium/v1/etronium.pr
 
 ## Статус
 
-✅ **Phase 0–4 готовы**, Phase 5 (WAL + graceful drain) done, live migration отвергнута.
+✅ **v0.3.0 released.** `tenant shell` (TTY relay) + `tenant attach --follow` + autoscale ABS_AUTO planner + flat CLI.
 
 Текущая функциональность:
 - Multi-lord, weighted placement по CPU+RAM
@@ -72,6 +72,10 @@ gRPC API в [`proto/etronium/v1/etronium.proto`](./proto/etronium/v1/etronium.pr
 - WAL для process_table (cold start replay)
 - Graceful shutdown с drain lords
 - Prometheus-friendly JSON logs
+- **Autoscale ABS_AUTO planner** — scheduler migrates coldest process off overloaded lords without any user action (v0.2.0+)
+- **Sched_ext BPF scheduler** — kernel-level dispatch via `sched_ext` (Phase 4); `SCHED_EXT` policy applied to every spawned task
+- **Interactive TTY relay** — `tenant shell` lets you run `apt-get`, `ls`, `kubectl` interactively with output streamed back (v0.3.0+)
+- One-command installer (`curl | bash -s -- scheduler/lord/tenant`) with auto-generated systemd units
 
 Не работает: live migration (CRIU) — отвергнута на kernel 6.17. Fault tolerance через V4+V5 вместо неё.
 
@@ -96,8 +100,10 @@ Subcommands (flat — like supervisord/systemd-run):
 | Subcommand | Purpose |
 |---|---|
 | `tenant run <exec> [args...]` | Spawn a new process (positional exec + args, `--cpu-shares`, `--mem-mb`, `--max-restarts`, `--state-dump`, `--prefer-lord`) |
+| `tenant shell [--shell <path>]` | **Interactive TTY relay on a lord** (v0.3.0+) — write `apt-get` locally, runs on lord, output relayed back through scheduler |
 | `tenant ps [--running]` | List this tenant's processes (alias: `ls`, `list`) |
 | `tenant get <pid>` | Get state of one process |
+| `tenant attach [--follow] <pid>` | **kubectl-attach analog** (v0.3.0+) — dump captured IO or stream live until process exits |
 | `tenant wait <pid>` | Block until process exits (returns exit code) |
 | `tenant kill <pid>` | Send signal (default `SIGTERM`, `--signal=…`, `--force=SIGKILL`) |
 | `tenant status` | Fleet summary: lords count + healthy count + scheduler address |
@@ -137,6 +143,22 @@ tenant wait <pid>     # exit code 0..N
 # Manual signal escalation:
 tenant kill <pid>              # SIGTERM
 tenant kill --signal=KILL <pid>  # SIGKILL
+
+# Interactive shell on a lord (v0.3.0+ — write `apt-get` locally,
+# it runs on a lord and you see the result as if it were local):
+tenant shell --shell=/bin/sh
+# [etronium shell] connected to lord=01KY3D75... pid=0
+# /bin/sh: 0: can't access tty; job control turned off
+$ echo HELLO_FROM_LORD
+HELLO_FROM_LORD
+$ uname -n
+midas-ThinkPad-E14-Gen-5
+$ ls -la / | head -3
+$ exit
+
+# Attach to a running process (dump buffer / stream live):
+tenant attach <pid>               # dump captured IO once
+tenant attach --follow <pid>      # live stream until process exits
 ```
 
 ### `lord` — donor machine (Go daemon)

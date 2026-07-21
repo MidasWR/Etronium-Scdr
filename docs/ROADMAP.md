@@ -1,10 +1,11 @@
 # Roadmap — Etronium
 
-> **Updated 2026-07-21 19:30**: Phase MVP **e2e-acceptance 7/8 passed** — готов к грубому
-> использованию в проде. Phase MVP deploys в 2-х вариантах: docker-compose + k8s manifests.
-> Файлы: `test/mvp/docker-compose.yml`, `deploy/k8s/base/`, `deploy/k8s/overlays/{dev,prod}`,
-> `scripts/mvp/e2e-acceptance.sh`, `deploy/README.md`. **No cyber, no top-optimization.**
+> **Updated 2026-07-22 01:40**: **v0.3.0 released** — `tenant shell` (interactive TTY relay).
+> Tenant terminal acts as if commands run locally, but they actually execute on a lord
+> through scheduler. `apt-get`, `ls`, `bash` — full transparent relay.
 >
+> **v0.2.0** (2026-07-21): autoscale ABS_AUTO planner + flat tenant CLI.
+> **v0.1.0** (2026-07-21): one-command installer (`curl | bash -s -- scheduler/lord/tenant`).
 > **Sched_ext (F1/F1b) deferred** — все 10 путей BPF struct_ops register EINVAL на нашем
 > kernel 7.0.0-28-generic. scx_bpfland 1.1.2 работает на этом ядре — это доказывает что
 > kernel готов к sched_ext, но наш custom .o через cilium/bpftool/custom Go — нет.
@@ -95,6 +96,28 @@ scripts/mvp/
 
 ---
 
+## Phase 6 — "Interactive TTY relay" (✅ v0.3.0)
+
+**Done 2026-07-22:** `tenant shell` + `tenant attach --follow`. End-user
+can run interactive commands on a lord (`apt-get`, `ls`, `kubectl`,
+`vim`) as if they were local.
+
+- [x] `tenant shell --shell=/bin/sh` — TTY raw mode + stdin/stdout/stderr
+      relay through scheduler via `WriteStdin` RPC + live `StreamProcessIO` follow
+- [x] `tenant attach [--follow] <pid>` — kubectl-attach analog for dump / stream
+- [x] Ctrl-D → graceful EOF → process exits normally
+- [x] Live follow polling: 100ms, exits on `entry.ExitedChan()`
+
+**Not done (Phase 2+ scope):**
+- [ ] PID 1 hijack (etronium-init as container PID 1, full pty replacement) — ~1-2 weeks
+- [ ] LD_PRELOAD + RPC relay for ELF binaries — ~1-2 months
+- [ ] Multi-line TUI optimization (vim, htop, less with full winch/screen refresh)
+- [ ] Shell history sync across sessions
+- [ ] `etronium logs` (central log tail per tenant/process)
+- [ ] File pull/push (S3-style on lord)
+
+---
+
 ## Out of scope (для будущих major)
 
 - ❌ Kernel patches для host'а (Win/Mac не должны страдать)
@@ -111,5 +134,9 @@ scripts/mvp/
 - **Phase 3.4** (✅ 3f00ea6) — recovery + V5 state dump
 - **Phase 5** (✅ bfbd474) — WAL + graceful shutdown
 - **Chaos testbed** (✅ 8045d12 — 95f0391) — 11 scenario chaos, 8/11 pass
+- **Phase 6** (✅ 2026-07-22, commit b4885f0) — interactive TTY relay (tenant shell)
+- **v0.1.0** (✅ 2026-07-21) — one-command installer
+- **v0.2.0** (✅ 2026-07-21, commit 6aed01b) — autoscale ABS_AUTO + flat CLI
+- **v0.3.0** (✅ 2026-07-22, commit b4885f0) — `tenant shell` + `tenant attach`
 
-Текущий focus — **Phase MVP** для demo.
+Текущий focus — **v0.4.0** (TBD: log tail + file pull/push + history sync).

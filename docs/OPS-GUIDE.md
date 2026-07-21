@@ -323,17 +323,18 @@ Env var `SCHEDULER_LISTEN` controls server side,
 
 ```bash
 # Spawn a long-running task (just like on a Linux VPS)
-tenant run \
-    --exec /bin/sleep --arg 3600
+# (v0.2.0+ flat CLI: positional exec + args, no --exec/--arg flags)
+tenant run /bin/sleep 3600
 
 # JSON output for scripts
-tenant run \
-    --exec /usr/bin/python3 --arg "-c" --arg "print('hi')" \
-    --json
+tenant run /usr/bin/python3 -c "print('hi')" --json
 
 # Spawn on a specific lord (soft affinity)
-tenant run --exec /bin/sleep --arg 60 \
-    --prefer-lord lord-edge-X
+tenant run /bin/sleep 60 --prefer-lord lord-edge-X
+
+# Interactive shell on a lord (v0.3.0+ — `apt-get` runs on lord,
+# output relayed back through scheduler, looks 100% local)
+tenant shell --shell=/bin/sh
 ```
 
 ### 4.4. Inspect and manage
@@ -344,6 +345,8 @@ tenant get <process_id>      # state, lord_id, local_pid
 tenant wait <process_id>     # block until exit (returns exit code)
 tenant kill <process_id>     # SIGTERM
 tenant kill <process_id> --signal SIGKILL
+tenant attach <process_id>              # dump captured IO (v0.3.0+)
+tenant attach --follow <process_id>     # live stream until process exits (v0.3.0+)
 
 tenant lords                         # see registered lords (opaque IDs)
 ```
@@ -352,14 +355,39 @@ tenant lords                         # see registered lords (opaque IDs)
 
 ```bash
 # CPU/memory soft hint — scheduler passes to lord
+# (v0.2.0+ flat CLI: --cpu-shares / --mem-mb, no --resources JSON)
 tenant run \
-    --exec /bin/python3 \
-    --resources '{"cpu_shares":100,"mem_limit_bytes":104857600}' \
-    --arg "-c" --arg "import time; time.sleep(60)"
+    --cpu-shares=100 --mem-mb=100 \
+    /bin/python3 -c "import time; time.sleep(60)"
 ```
 
 (Right now this is honored on the lord side via cgroups, but the BPF
 scheduler doesn't yet account for it in `etr_lord_cpus` mask.)
+
+### 4.6. Interactive shell on a lord (v0.3.0+)
+
+For tenant interactive work (apt-get, kubectl, vim) on a lord:
+
+```bash
+tenant shell --shell=/bin/sh
+# [etronium shell] connected to lord=01KY3D75... pid=0
+$ echo HELLO_FROM_LORD
+HELLO_FROM_LORD
+$ ls / | head -3
+```
+
+How it works: tenant's terminal stdin is relayed to lord's process
+stdin pipe via `WriteStdin` RPC. Process stdout/stderr is polled
+from the ring buffer every 100ms via `StreamProcessIO` follow and
+written to the tenant's terminal. TTY is set to raw mode so Ctrl-C
+goes to the process, not the terminal driver.
+
+To dump IO of a long-running process:
+
+```bash
+tenant attach --follow <process_id>     # stream live until exit
+tenant attach <process_id>              # dump captured buffer once
+```
 
 ---
 
@@ -415,19 +443,23 @@ For JSON (Prometheus-friendly):
 scheduler stats --json
 ```
 
-### 5.3. Live migration (rebalance)
+### 5.3. Rebalance / live migration
 
-Triggered by the operator:
+**v0.2.0+: no `scheduler migrate` CLI.** Autoscale (ABS_AUTO planner)
+runs every 30s and migrates the coldest process off overloaded lords
+automatically. Tune via env vars — see [AUTOSCALE.md](./AUTOSCALE.md).
 
 ```bash
-
-# → BPF map etr_lord_cpus[lord-edge-X] = 0x1 → 0xF (4 CPUs now available)
-
-
-# → full capacity
-
-# → contract back
+# Force a rebalance decision NOW (debug):
+docker exec mvp-frontend env ETRONIUM_AUTOSCALE_INTERVAL=5s scheduler serve
+# Watch logs:
+docker logs mvp-frontend --tail -f | grep autoscale
+# → "autoscale decision" score=0.42 lord_from=01... lord_to=01...
 ```
+
+If you really need manual control (v0.1.x legacy), re-tag the BPF map
+directly via `bpftool map update pinned /sys/fs/bpf/etronium/maps/etr_lord_cpus ...` —
+see ADR-040.
 
 Live migration is **immediate on the BPF map** but **lazy on the
 lord side** — it changes the mask for new task placement and live
@@ -550,7 +582,9 @@ See [docs/ROADMAP.md](./ROADMAP.md) for the full timeline.
 - [ ] `cat /sys/kernel/sched_ext/state` → `enabled`
 - [ ] `scheduler stats` → `nr_rejected = 0`, ≥1 entry per `etr_*` map
 - [ ] `tenant run` works
-- [ ] `scheduler migrate` works (BPF map updates visible)
+- [ ] `tenant shell --shell=/bin/sh` works (v0.3.0+ — interactive TTY relay)
+- [ ] Autoscale kicks in: leave a CPU-burning loop running on one lord,
+      watch `scheduler logs` show "migrate" decision within ~30s (v0.2.0+)
 - [ ] Lord crash test: `docker stop mvp-lord-XX` → `tenant ps`
       shows processes re-spawned on a healthy lord
 - [ ] WAL recovery: `docker restart mvp-frontend` → processes

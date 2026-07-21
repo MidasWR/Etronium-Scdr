@@ -59,11 +59,13 @@ sudo /usr/local/bin/installer.sh uninstall
 
 ```bash
 tenant lords                                               # what lords exist
-tenant run --exec /bin/sleep --arg 3600          # spawn a process
+tenant run /bin/sleep 3600                       # spawn a process (flat CLI, v0.2.0+)
+tenant shell --shell=/bin/sh                     # interactive TTY relay to a lord (v0.3.0+)
 tenant ps                                        # all your processes
 tenant get <id>                                    # detailed state
 tenant wait <id>                                   # block on exit
 tenant kill <id>                                   # SIGTERM
+tenant attach --follow <id>                       # live stream process IO (debug)
 
 ```
 
